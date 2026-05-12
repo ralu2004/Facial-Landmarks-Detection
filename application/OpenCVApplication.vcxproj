@@ -96,11 +96,14 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="common.h" />
+    <ClInclude Include="FacialLandmarks.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="targetver.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="Approach1_HSV.cpp" />
     <ClCompile Include="common.cpp" />
+    <ClCompile Include="FacialLandmarksUtils.cpp" />
     <ClCompile Include="OpenCVApplication.cpp" />
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
