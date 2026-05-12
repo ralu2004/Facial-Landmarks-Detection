@@ -71,4 +71,4 @@ Mat_<Vec3b>         drawLandmarks(Mat_<Vec3b> img, FaceGeometry face, Landmarks 
 // ============================================================================
 
 void runApproach1(const string& path);   // HSV skin + darkness/redness features
-// void runApproach2(const string& path);
+void runApproach2(const string& path);
