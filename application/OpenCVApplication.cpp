@@ -14,7 +14,10 @@ int main() {
     cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_FATAL);
     projectPath = _wgetcwd(0, 0);
 
-    string path = "Images/Angelina_Jolie_0006.jpg";
+    //string path = "Images/Angelina_Jolie_0006.jpg";
+    char fname[MAX_PATH];
+    openFileDlg(fname);
+    string path(fname);
 
     int choice = 0;
     cout << "Facial Landmarks Detection\n";

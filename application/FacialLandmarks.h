@@ -48,6 +48,24 @@ struct Component {
     int    minC = 0, maxC = 0;
 };
 
+struct LandmarkParams {
+    int   strelKsize = 5;
+
+    float eyeBandTop = 0.20f;
+    float eyeBandBottom = 0.55f;
+    int   eyeDarknessOffset = 15;
+
+    float mouthBandTop = 0.68f;
+    float mouthBandBottom = 0.90f;
+
+    float minCompAreaFrac = 0.0003f;
+    float maxCompAreaFrac = 0.05f;
+
+    float minEyeSepFrac = 0.20f;
+    float maxEyeSepFrac = 0.65f;
+    float maxEyeDyFrac = 0.10f;
+};
+
 // ============================================================================
 // Shared helper declarations (defined in FacialLandmarksUtils.cpp)
 // ============================================================================
@@ -65,6 +83,12 @@ vector<Component>   componentStats(Mat_<int> labels, Mat_<uchar> mask);
 bool                isInsideFace(const Mat_<uchar>& faceMask, int i, int j, int bboxLeft, int bboxRight);
 void                drawCross(Mat& img, Point p, Scalar color, int sz = 10);
 Mat_<Vec3b>         drawLandmarks(Mat_<Vec3b> img, FaceGeometry face, Landmarks lm);
+FaceGeometry        extractFace(Mat_<uchar> skinMask, int strelKsize);
+Mat_<uchar>         darkFeatureMask(Mat_<Vec3b> img, FaceGeometry face, float bandTopFrac, float bandBottomFrac, int darknessOffset);
+Mat_<uchar>         mouthFeatureMask(Mat_<Vec3b> img, FaceGeometry face, float bandTopFrac, float bandBottomFrac);
+bool                selectEyePair(vector<Component> comps, FaceGeometry face, Point& leftEye, Point& rightEye, const LandmarkParams& p);
+bool                selectMouth(vector<Component> comps, FaceGeometry face, Point& mouth, const LandmarkParams& p);
+Landmarks           detectLandmarks(Mat_<Vec3b> img, FaceGeometry face, const LandmarkParams& p);
 
 // ============================================================================
 // Approach entry points (one per approach .cpp)
