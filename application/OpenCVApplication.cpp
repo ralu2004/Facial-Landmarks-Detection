@@ -43,11 +43,12 @@ namespace params {
     const float EYE_BAND_BOTTOM = 0.55f; // stop above the nose tip
 
     // mouth search band
-    const float MOUTH_BAND_TOP = 0.65f;
-    const float MOUTH_BAND_BOTTOM = 0.95f;
+    const float MOUTH_BAND_BOTTOM = 0.90f;
+    const float MOUTH_BAND_TOP = 0.68f;
 
     // how much darker than the face mean a pixel must be (larger = stricter)
     const int EYE_DARKNESS_OFFSET = 15;
+    const int MOUTH_DARKNESS_OFFSET = 10;
 
     // accepted component area, as fractions of face area
     const float MIN_COMP_AREA_FRAC = 0.0003f;
@@ -98,7 +99,6 @@ Mat_<uchar> convertToGray(Mat_<Vec3b> img) {
     Mat_<uchar> gray(img.size());
     for (int i = 0; i < img.rows; ++i) {
         for (int j = 0; j < img.cols; ++j) {
-            // gray(i, j) = (img(i, j)[2] + img(i, j)[1] + img(i, j)[0]) / 3;
             gray(i, j) = 0.299 * img(i, j)[2] + 0.587 * img(i, j)[1] + 0.114 * img(i, j)[0];
         }
     }
@@ -204,8 +204,8 @@ Mat_<uchar> erosion(Mat_<uchar> src, Mat_<uchar> strel) {
 
 Mat_<int> twoPassLabeling(Mat_<uchar> img) {
     // Np(i,j)={(i,j-1), (i-1,j-1), (i-1,j), (i-1,j+1)}.
-    int dx[4] = { 0, -1, -1, -1};
-    int dy[4] = { -1, -1, 0, 1};
+    int dx[4] = { 0, -1, -1, -1 };
+    int dy[4] = { -1, -1,  0,  1 };
     int label = 0;
 
     Mat_<int> labels = Mat_<int>::zeros(img.rows, img.cols);
@@ -329,11 +329,10 @@ Mat_<uchar> detectSkin(Mat_<Vec3b> img) {
 }
 
 // face = largest connected component of the cleaned skin mask
-// face = largest connected component of the cleaned skin mask
 FaceGeometry extractFace(Mat_<uchar> skinMask) {
     FaceGeometry fg;
 
-    // clean the mask 
+    // clean the mask:
     // opening removes specks (hands, neck patches),
     // closing fills small holes so the face is one connected component
     Mat_<uchar> opened = opening(skinMask, params::STREL_KSIZE);
@@ -367,8 +366,7 @@ FaceGeometry extractFace(Mat_<uchar> skinMask) {
         for (int j = 0; j < labels.cols; ++j) {
             if (labels(i, j) == faceLabel) {
                 face(i, j) = 255;
-                // skinOnly = the same region but using the opened-only mask,
-                // so eye/mouth holes inside the face are still 0
+                // skinOnly uses the opened-only mask so eye/mouth holes are still 0
                 if (opened(i, j) == 255) faceSkinOnly(i, j) = 255;
                 if (i < minR) minR = i;
                 if (i > maxR) maxR = i;
@@ -392,50 +390,37 @@ bool isInsideFace(const Mat_<uchar>& faceMask, int i, int j, int bboxLeft, int b
     int leftLimit = max(0, bboxLeft);
     int rightLimit = min(faceMask.cols, bboxRight);
     for (int k = j - 1; k >= leftLimit; --k) {
-        if (faceMask(i, k) == 255) {
-            faceLeft = true;
-            break;
-        }
+        if (faceMask(i, k) == 255) { faceLeft = true; break; }
     }
     for (int k = j + 1; k < rightLimit; ++k) {
-        if (faceMask(i, k) == 255) {
-            faceRight = true;
-            break;
-        }
+        if (faceMask(i, k) == 255) { faceRight = true; break; }
     }
     return faceLeft && faceRight;
 }
 
-// dark-feature mask: pixels significantly darker than the face mean:
-// eyes, eyebrows, nostrils, mouth interior
+// dark-feature mask: pixels significantly darker than the face mean,
+// inside the expected vertical band, not on skin
 Mat_<uchar> darkFeatureMask(Mat_<Vec3b> img, FaceGeometry face, float bandTopFrac, float bandBottomFrac, int darknessOffset) {
     Mat_<uchar> gray = convertToGray(img);
 
-    // mean intensity inside the face mask only 
+    // mean intensity inside the face mask only
     long sum = 0, n = 0;
     for (int i = 0; i < gray.rows; ++i)
         for (int j = 0; j < gray.cols; ++j)
-            if (face.mask(i, j) == 255) {
-                sum += gray(i, j);
-                n++;
-            }
+            if (face.mask(i, j) == 255) { sum += gray(i, j); n++; }
 
     int faceMean = (n > 0) ? int(sum / n) : 128;
     int threshold = faceMean - darknessOffset;
-    
-    cout << "faceMean=" << faceMean << " threshold=" << threshold << "\n";
 
-    // search band rows
     int rTop = face.bbox.y + int(bandTopFrac * face.bbox.height);
     int rBottom = face.bbox.y + int(bandBottomFrac * face.bbox.height);
-
     int bboxLeft = face.bbox.x;
     int bboxRight = face.bbox.x + face.bbox.width;
 
     Mat_<uchar> mask(gray.size(), (uchar)0);
     for (int i = rTop; i <= rBottom && i < gray.rows; ++i) {
         if (i < 0) continue;
-        for (int j = face.bbox.x; j < face.bbox.x + face.bbox.width; ++j) {
+        for (int j = bboxLeft; j < bboxRight; ++j) {
             if (j < 0 || j >= gray.cols) continue;
             if (face.skinOnly(i, j) == 255) continue; // skin is not a feature
             if (!isInsideFace(face.mask, i, j, bboxLeft, bboxRight)) continue;
@@ -444,7 +429,35 @@ Mat_<uchar> darkFeatureMask(Mat_<Vec3b> img, FaceGeometry face, float bandTopFra
     }
 
     // small opening to drop single-pixel noise but not enough to merge
-    // eyebrows with eyes (that was the old bug)
+    // eyebrows with eyes
+    return opening(mask, 3);
+}
+
+// redness-based mouth mask: mouths have characteristic redness (R > G, R > B)
+// regardless of darkness, which works on lips that aren't significantly darker
+// than skin in grayscale (Hsu et al. 2002 MouthMap approach)
+Mat_<uchar> mouthFeatureMask(Mat_<Vec3b> img, FaceGeometry face) {
+    int rTop = face.bbox.y + int(params::MOUTH_BAND_TOP * face.bbox.height);
+    int rBottom = face.bbox.y + int(params::MOUTH_BAND_BOTTOM * face.bbox.height);
+    int bboxLeft = face.bbox.x;
+    int bboxRight = face.bbox.x + face.bbox.width;
+
+    Mat_<uchar> mask(img.size(), (uchar)0);
+    for (int i = rTop; i <= rBottom && i < img.rows; ++i) {
+        if (i < 0) continue;
+        for (int j = bboxLeft; j < bboxRight; ++j) {
+            if (j < 0 || j >= img.cols) continue;
+            if (!isInsideFace(face.mask, i, j, bboxLeft, bboxRight)) continue;
+
+            int R = img(i, j)[2];
+            int G = img(i, j)[1];
+            int B = img(i, j)[0];
+
+            // mouth is reddish: R substantially greater than G, and R > B
+            if (R - G > 30 && R > B) mask(i, j) = 255;
+        }
+    }
+
     return opening(mask, 3);
 }
 
@@ -489,25 +502,11 @@ vector<Component> componentStats(Mat_<int> labels, Mat_<uchar> mask) {
 // pick the lowest-scoring pair
 bool selectEyePair(vector<Component> comps, FaceGeometry face, Point& leftEye, Point& rightEye) {
     int   faceArea = face.bbox.area();
-
-    cout << "got comps, count=" << comps.size() << "\n";
-    for (size_t k = 0; k < comps.size(); ++k) {
-        cout << "  comp[" << k << "] area=" << comps[k].area
-            << " centroid=(" << (int)comps[k].cx << "," << (int)comps[k].cy << ")\n";
-    }
-    cout << "face.midCol=" << face.midCol
-        << " bbox=[" << face.bbox.x << "," << face.bbox.y
-        << " " << face.bbox.width << "x" << face.bbox.height << "]\n";
-
     float minArea = params::MIN_COMP_AREA_FRAC * faceArea;
     float maxArea = params::MAX_COMP_AREA_FRAC * faceArea;
     float maxDy = params::MAX_EYE_DY_FRAC * face.bbox.height;
     float minSep = params::MIN_EYE_SEPARATION_FRAC * face.bbox.width;
     float maxSep = params::MAX_EYE_SEPARATION_FRAC * face.bbox.width;
-
-    cout << "thresholds: area[" << minArea << "," << maxArea
-        << "] maxDy=" << maxDy
-        << " sep[" << minSep << "," << maxSep << "]\n";
 
     // keep only sensibly-sized components
     vector<Component> valid;
@@ -562,34 +561,29 @@ bool selectEyePair(vector<Component> comps, FaceGeometry face, Point& leftEye, P
     }
 
     if (bestI < 0) {
-        cout << "Eye pair not found, trying single-eye fallback. valid.size()=" << valid.size() << "\n";
-        if (valid.empty()) { cout << "  no valid components\n"; return false; }
+        if (valid.empty()) return false;
 
+        // single-eye fallback: mirror the best candidate across the midline
         const Component* bestSingle = nullptr;
         double bestSingleScore = -1;
         for (const Component& c : valid) {
-            double yFrac = (c.cy - face.bbox.y) / face.bbox.height; 
-            double score = yFrac; // higher = lower in band = better
-            if (score > bestSingleScore) {
-                bestSingleScore = score;
+            double yFrac = (c.cy - face.bbox.y) / face.bbox.height;
+            if (yFrac > bestSingleScore) {
+                bestSingleScore = yFrac;
                 bestSingle = &c;
             }
         }
         if (!bestSingle) return false;
 
-        // mirror across the face midline
         int mirroredX = 2 * face.midCol - (int)bestSingle->cx;
         Point detected((int)bestSingle->cx, (int)bestSingle->cy);
         Point mirrored(mirroredX, (int)bestSingle->cy);
 
         if (detected.x < mirrored.x) { leftEye = detected; rightEye = mirrored; }
         else { leftEye = mirrored; rightEye = detected; }
-        cout << "  fallback eye at (" << bestSingle->cx << ", " << bestSingle->cy
-            << "), mirrored to (" << mirroredX << ", " << bestSingle->cy << ")\n";
         return true;
     }
-    
-    cout << "Eye pair found\n";
+
     Point pa((int)valid[bestI].cx, (int)valid[bestI].cy);
     Point pb((int)valid[bestJ].cx, (int)valid[bestJ].cy);
 
@@ -599,21 +593,22 @@ bool selectEyePair(vector<Component> comps, FaceGeometry face, Point& leftEye, P
     return true;
 }
 
-// mouth = largest dark blob in the lower band, near the midline
+// mouth = largest reddish blob in the lower band, near the midline
 bool selectMouth(vector<Component> comps, FaceGeometry face, Point& mouth) {
     int   faceArea = face.bbox.area();
-    float minArea = params::MIN_COMP_AREA_FRAC * faceArea * 2; // mouth is bigger
-    float maxArea = params::MAX_COMP_AREA_FRAC * faceArea;
+    float minArea = 0.003f * faceArea;
+    float maxArea = 0.25f * faceArea;
 
     Component best;
-    bool found = false;
+    bool   found = false;
     double bestScore = -1;
     for (Component c : comps) {
         if (c.area < minArea || c.area > maxArea) continue;
 
         int width = c.maxC - c.minC + 1;
         int height = c.maxR - c.minR + 1;
-        if (height > width) continue;
+        if (height > width * 1.3) continue;
+        if (width < 0.15f * face.bbox.width || width > 0.90f * face.bbox.width) continue;
 
         // prefer blobs near the horizontal midline
         double horizPenalty = fabs(c.cx - face.midCol) / face.bbox.width;
@@ -625,7 +620,9 @@ bool selectMouth(vector<Component> comps, FaceGeometry face, Point& mouth) {
         }
     }
     if (!found) return false;
-    mouth = Point((int)best.cx, (int)best.cy);
+
+    // use top of blob rather than centroid — centroid is pulled down by chin/neck
+    mouth = Point((int)best.cx, best.minR);
     return true;
 }
 
@@ -634,22 +631,16 @@ Landmarks detectLandmarks(Mat_<Vec3b> img, FaceGeometry face) {
 
     // eyes
     {
-        Mat_<uchar> eyeMask = darkFeatureMask(img, face, params::EYE_BAND_TOP, params::EYE_BAND_BOTTOM, params::EYE_DARKNESS_OFFSET);
-        imshow("skinOnly", face.skinOnly);
-        imshow("eyeMask", eyeMask);
-        cout << "got eyeMask\n";
-        Mat_<int> eyeLabels = twoPassLabeling(eyeMask);
-        cout << "got eyeLabels\n";
+        Mat_<uchar>       eyeMask = darkFeatureMask(img, face, params::EYE_BAND_TOP, params::EYE_BAND_BOTTOM, params::EYE_DARKNESS_OFFSET);
+        Mat_<int>         eyeLabels = twoPassLabeling(eyeMask);
         vector<Component> comps = componentStats(eyeLabels, eyeMask);
-        cout << "got comps, count=" << comps.size() << "\n";
         lm.eyesOk = selectEyePair(comps, face, lm.leftEye, lm.rightEye);
-        cout << "selectEyePair returned " << lm.eyesOk << "\n";
     }
 
     // mouth
     {
-        Mat_<uchar> mouthMask = darkFeatureMask(img, face, params::MOUTH_BAND_TOP, params::MOUTH_BAND_BOTTOM, params::EYE_DARKNESS_OFFSET - 10);
-        Mat_<int> mouthLabels = twoPassLabeling(mouthMask);
+        Mat_<uchar>       mouthMask = mouthFeatureMask(img, face);
+        Mat_<int>         mouthLabels = twoPassLabeling(mouthMask);
         vector<Component> comps = componentStats(mouthLabels, mouthMask);
         lm.mouthOk = selectMouth(comps, face, lm.mouth);
     }
@@ -658,7 +649,7 @@ Landmarks detectLandmarks(Mat_<Vec3b> img, FaceGeometry face) {
 }
 
 void drawCross(Mat& img, Point p, Scalar color, int sz = 10) {
-    if (p.x < 0  || p.y < 0) return;
+    if (p.x < 0 || p.y < 0) return;
     line(img, Point(p.x - sz, p.y), Point(p.x + sz, p.y), color, 2);
     line(img, Point(p.x, p.y - sz), Point(p.x, p.y + sz), color, 2);
 }
@@ -702,7 +693,9 @@ int main() {
     cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_FATAL);
     projectPath = _wgetcwd(0, 0);
 
-    runFacialLandmarks("Images/Serena_Williams_0038.jpg");
+    //runFacialLandmarks("Images/Serena_Williams_0038.jpg");
     //runFacialLandmarks("Images/Angelina_Jolie_0006.jpg");
+    runFacialLandmarks("Images/Raluca.jpg");
+
     return 0;
 }
