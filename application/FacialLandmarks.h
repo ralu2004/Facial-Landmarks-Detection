@@ -96,3 +96,10 @@ Landmarks           detectLandmarks(Mat_<Vec3b> img, FaceGeometry face, const La
 
 void runApproach1(const string& path);   // HSV skin + darkness/redness features
 void runApproach2(const string& path);
+
+// ============================================================================
+// Evaluation wrappers
+// ============================================================================
+
+Mat_<uchar> detectSkinHSV(Mat_<Vec3b> img);
+Mat_<uchar> detectSkinAutoSeed(Mat_<Vec3b> img);

@@ -1,10 +1,8 @@
-﻿// main.cpp
-// Entry point. Presents a menu to pick which approach to run.
-
-#include "stdafx.h"
+﻿#include "stdafx.h"
 #include "common.h"
 #include <opencv2/core/utils/logger.hpp>
 #include "FacialLandmarks.h"
+#include "Evaluation.h"
 
 using namespace std;
 
@@ -14,24 +12,64 @@ int main() {
     cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_FATAL);
     projectPath = _wgetcwd(0, 0);
 
-    //string path = "Images/Angelina_Jolie_0006.jpg";
     char fname[MAX_PATH];
     openFileDlg(fname);
     string path(fname);
 
     int choice = 0;
     cout << "Facial Landmarks Detection\n";
-    cout << "1. HSV skin + darkness/redness features\n";
-    cout << "2. Interactive region growing\n";
+    cout << "1. Approach 1 - HSV skin detection\n";
+    cout << "2. Approach 2 - Region growing\n";
+    cout << "3. Evaluate Approach 1 on MTFL\n";
+    cout << "4. Evaluate Approach 2 on MTFL\n";
     cout << "0. Exit\n";
     cout << "Choice: ";
     cin >> choice;
 
-    switch (choice) {
+    if (choice == 1 || choice == 2) {
+        switch (choice) {
         case 1: runApproach1(path); break;
         case 2: runApproach2(path); break;
-        case 0: break;
-        default: cout << "Unknown choice.\n"; break;
+        }
+    }
+    else if (choice == 3 || choice == 4) {
+        string annotationFile, imageRoot;
+        int    maxImages;
+
+        /*
+        cout << "Annotation file path (training.txt): ";
+        cin >> annotationFile;
+        cout << "Image root folder: ";
+        cin >> imageRoot;
+        cout << "Max images to evaluate: ";
+        cin >> maxImages;
+        cin.ignore();
+        */
+        cin.ignore();  
+
+        cout << "Annotation file path (training.txt): ";
+        getline(cin, annotationFile);
+
+        cout << "Image root folder: ";
+        getline(cin, imageRoot);
+
+        cout << "Max images to evaluate: ";
+        cin >> maxImages;
+        cin.ignore();
+
+        LandmarkParams p;
+        EvalResult result;
+
+        if (choice == 3)
+            result = runEvaluation(annotationFile, imageRoot, maxImages, detectSkinHSV, p);
+        else
+            result = runEvaluation(annotationFile, imageRoot, maxImages, detectSkinAutoSeed, p);
+
+        cout << "\n=== Results ===\n";
+        cout << "Total images:    " << result.total << "\n";
+        cout << "Detected:        " << result.detected << "\n";
+        cout << "Mean NME:        " << result.meanNME << "\n";
+        cout << "Failure rate:    " << result.failureRate << "%\n";
     }
 
     return 0;

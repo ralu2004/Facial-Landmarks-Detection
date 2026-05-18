@@ -90,6 +90,12 @@ static Mat_<uchar> regionGrowing(const Mat_<Vec3b>& img, Point seed) {
     return mask;
 }
 
+// auto-seed version for evaluation — samples from upper-center of image
+Mat_<uchar> detectSkinAutoSeed(Mat_<Vec3b> img) {
+    Point seed(img.cols / 2, img.rows / 2); 
+    return regionGrowing(img, seed);
+}
+
 void runApproach2(const string& path) {
     Mat_<Vec3b> img = imread(path, IMREAD_COLOR);
     if (img.empty()) { cout << "Image not loaded: " << path << "\n"; return; }

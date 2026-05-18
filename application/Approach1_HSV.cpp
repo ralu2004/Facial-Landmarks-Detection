@@ -30,6 +30,11 @@ static Mat_<uchar> detectSkin(Mat_<Vec3b> img) {
     return mask;
 }
 
+// wrapper for evaluation
+Mat_<uchar> detectSkinHSV(Mat_<Vec3b> img) {
+    return detectSkin(img);
+}
+
 void runApproach1(const string& path) {
     Mat_<Vec3b> img = imread(path, IMREAD_COLOR);
     if (img.empty()) { cout << "Image not loaded: " << path << "\n"; return; }
