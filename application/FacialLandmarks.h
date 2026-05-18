@@ -103,3 +103,4 @@ void runApproach2(const string& path);
 
 Mat_<uchar> detectSkinHSV(Mat_<Vec3b> img);
 Mat_<uchar> detectSkinAutoSeed(Mat_<Vec3b> img);
+Mat_<uchar> regionGrowingPublic(Mat_<Vec3b> img, Point seed);

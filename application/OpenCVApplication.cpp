@@ -22,6 +22,7 @@ int main() {
     cout << "2. Approach 2 - Region growing\n";
     cout << "3. Evaluate Approach 1 on MTFL\n";
     cout << "4. Evaluate Approach 2 on MTFL\n";
+    cout << "5. Evaluate A2 upper bound (GT seed)\n";
     cout << "0. Exit\n";
     cout << "Choice: ";
     cin >> choice;
@@ -32,19 +33,10 @@ int main() {
         case 2: runApproach2(path); break;
         }
     }
-    else if (choice == 3 || choice == 4) {
+    else if (choice == 3 || choice == 4 || choice == 5) {
         string annotationFile, imageRoot;
         int    maxImages;
 
-        /*
-        cout << "Annotation file path (training.txt): ";
-        cin >> annotationFile;
-        cout << "Image root folder: ";
-        cin >> imageRoot;
-        cout << "Max images to evaluate: ";
-        cin >> maxImages;
-        cin.ignore();
-        */
         cin.ignore();  
 
         cout << "Annotation file path (training.txt): ";
@@ -62,8 +54,12 @@ int main() {
 
         if (choice == 3)
             result = runEvaluation(annotationFile, imageRoot, maxImages, detectSkinHSV, p);
-        else
+        else if (choice == 4)
             result = runEvaluation(annotationFile, imageRoot, maxImages, detectSkinAutoSeed, p);
+        else if (choice == 5) {
+            result = runEvaluationGTSeed(annotationFile, imageRoot, maxImages, p);
+
+    }
 
         cout << "\n=== Results ===\n";
         cout << "Total images:    " << result.total << "\n";
@@ -71,6 +67,6 @@ int main() {
         cout << "Mean NME:        " << result.meanNME << "\n";
         cout << "Failure rate:    " << result.failureRate << "%\n";
     }
-
+    
     return 0;
 }
