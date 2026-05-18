@@ -42,7 +42,7 @@ void runApproach1(const string& path) {
     Mat_<uchar>  skin = detectSkin(img);
 
     LandmarkParams p;  // uses defaults from the struct
-    FaceGeometry face = extractFace(skin, p.strelKsize);
+    FaceGeometry face = extractFace(skin, p);
     if (!face.valid) { cout << "No face found.\n"; return; }
 
     Landmarks   lm = detectLandmarks(img, face, p);

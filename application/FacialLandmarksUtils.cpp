@@ -35,7 +35,7 @@ vector<Mat_<uchar>> computeHSV(Mat_<Vec3b> img) {
             m = min(r, min(g, b)); // minimum of R, G, B
             C = M - m;             // chroma
 
-            // Value (Brightness)
+            // Value
             v = M;
 
             // Saturation
@@ -54,8 +54,8 @@ vector<Mat_<uchar>> computeHSV(Mat_<Vec3b> img) {
             if (h < 0) h = h + 360;
 
             // scale values back to 8-bit range [0, 255]
-            hue(i, j)   = h / 2;     // H is halved to fit in [0, 180]
-            sat(i, j)   = s * 255.0;
+            hue(i, j) = h / 2;     // H is halved to fit in [0, 180]
+            sat(i, j) = s * 255.0;
             value(i, j) = v * 255.0;
         }
     }
@@ -64,7 +64,7 @@ vector<Mat_<uchar>> computeHSV(Mat_<Vec3b> img) {
 
 Mat_<uchar> dilation(Mat_<uchar> src, Mat_<uchar> strel) {
     Mat_<uchar> dst(src.size());
-    dst.setTo(0); // background
+    dst.setTo(0); 
 
     for (int i = 0; i < src.rows; ++i) {
         for (int j = 0; j < src.cols; ++j) {
@@ -107,7 +107,7 @@ Mat_<uchar> erosion(Mat_<uchar> src, Mat_<uchar> strel) {
                     if (!fits) break;
                 }
                 if (fits)
-                    dst(i, j) = 255; // only set if the strel fits perfectly
+                    dst(i, j) = 255; // only set if the strel fits 
             }
         }
     }
@@ -115,9 +115,9 @@ Mat_<uchar> erosion(Mat_<uchar> src, Mat_<uchar> strel) {
 }
 
 Mat_<int> twoPassLabeling(Mat_<uchar> img) {
-    // Np(i,j)={(i,j-1), (i-1,j-1), (i-1,j), (i-1,j+1)}.
-    int dx[4] = { 0, -1, -1, -1 };
-    int dy[4] = { -1, -1,  0,  1 };
+    // Np(i,j) = { (i, j-1), (i-1, j-1), (i-1, j), (i-1, j+1) }
+    int dRow[4] = { 0, -1, -1, -1 }; // row offsets
+    int dCol[4] = { -1, -1,  0,  1 }; // col offsets
     int label = 0;
 
     Mat_<int> labels = Mat_<int>::zeros(img.rows, img.cols);
@@ -130,8 +130,8 @@ Mat_<int> twoPassLabeling(Mat_<uchar> img) {
 
             vector<int> L;
             for (int d = 0; d < 4; d++) {
-                int ni = i + dx[d];
-                int nj = j + dy[d];
+                int ni = i + dRow[d];
+                int nj = j + dCol[d];
                 if (isInside(img, ni, nj) && labels(ni, nj) > 0)
                     L.push_back(labels(ni, nj));
             }
@@ -217,16 +217,16 @@ vector<Component> componentStats(Mat_<int> labels, Mat_<uchar> mask) {
             Component& c = m[l];
             if (c.area == 0) {
                 c.label = l;
-                c.minR  = c.maxR = i;
-                c.minC  = c.maxC = j;
+                c.minR = c.maxR = i;
+                c.minC = c.maxC = j;
             }
             c.area++;
-            c.cy   += i;
-            c.cx   += j;
-            c.minR  = min(c.minR, i);
-            c.maxR  = max(c.maxR, i);
-            c.minC  = min(c.minC, j);
-            c.maxC  = max(c.maxC, j);
+            c.cy += i;
+            c.cx += j;
+            c.minR = min(c.minR, i);
+            c.maxR = max(c.maxR, i);
+            c.minC = min(c.minC, j);
+            c.maxC = max(c.maxC, j);
         }
     }
     vector<Component> out;
@@ -240,9 +240,11 @@ vector<Component> componentStats(Mat_<int> labels, Mat_<uchar> mask) {
     return out;
 }
 
+// scanline test: pixel (i,j) is inside the face contour if there is a
+// face-mask pixel both to its left and to its right on the same row
 bool isInsideFace(const Mat_<uchar>& faceMask, int i, int j, int bboxLeft, int bboxRight) {
     bool faceLeft = false, faceRight = false;
-    int leftLimit  = max(0, bboxLeft);
+    int leftLimit = max(0, bboxLeft);
     int rightLimit = min(faceMask.cols, bboxRight);
     for (int k = j - 1; k >= leftLimit; --k)
         if (faceMask(i, k) == 255) { faceLeft = true; break; }
@@ -257,24 +259,27 @@ void drawCross(Mat& img, Point p, Scalar color, int sz) {
     line(img, Point(p.x, p.y - sz), Point(p.x, p.y + sz), color, 2);
 }
 
-Mat_<Vec3b> drawLandmarks(Mat_<Vec3b> img, FaceGeometry face, Landmarks lm) {
+Mat_<Vec3b> drawLandmarks(Mat_<Vec3b> img, const FaceGeometry& face, const Landmarks& lm) {
     Mat_<Vec3b> out = img.clone();
     rectangle(out, face.bbox, { 0, 255, 0 }, 2);
     if (lm.eyesOk) {
-        drawCross(out, lm.leftEye,  { 0, 0, 255 });
+        drawCross(out, lm.leftEye, { 0, 0, 255 });
         drawCross(out, lm.rightEye, { 0, 0, 255 });
     }
     if (lm.mouthOk) drawCross(out, lm.mouth, { 255, 0, 0 });
     return out;
 }
 
-FaceGeometry extractFace(Mat_<uchar> skinMask, int strelKsize) {
+// face = largest connected component of the cleaned skin mask
+FaceGeometry extractFace(Mat_<uchar> skinMask, const LandmarkParams& p) {
     FaceGeometry fg;
 
-    // opening removes specks (hands, neck patches),
+    // opening removes specks (hands, neck patches)
     // closing fills small holes so the face is one connected component
-    Mat_<uchar> opened = opening(skinMask, strelKsize);
-    Mat_<uchar> cleaned = closing(opened, 3);
+    // closingKsize is intentionally smaller than strelKsize: fills tiny
+    // pixel gaps without filling eye/mouth holes that feature detection needs
+    Mat_<uchar> opened = opening(skinMask, p.strelKsize);
+    Mat_<uchar> cleaned = closing(opened, p.closingKsize);
 
     Mat_<int> labels = twoPassLabeling(cleaned);
 
@@ -321,10 +326,10 @@ FaceGeometry extractFace(Mat_<uchar> skinMask, int strelKsize) {
 
 // dark-feature mask: pixels significantly darker than the face mean,
 // inside the expected vertical band, not on skin
-Mat_<uchar> darkFeatureMask(Mat_<Vec3b> img, FaceGeometry face, float bandTopFrac, float bandBottomFrac, int darknessOffset) {
+Mat_<uchar> darkFeatureMask(Mat_<Vec3b> img, const FaceGeometry& face, float bandTopFrac, float bandBottomFrac, int darknessOffset) {
     Mat_<uchar> gray = convertToGray(img);
 
-    // mean intensity inside the face mask only
+    // mean intensity inside the face mask only (not whole image)
     long sum = 0, n = 0;
     for (int i = 0; i < gray.rows; ++i)
         for (int j = 0; j < gray.cols; ++j)
@@ -355,9 +360,9 @@ Mat_<uchar> darkFeatureMask(Mat_<Vec3b> img, FaceGeometry face, float bandTopFra
 }
 
 // redness-based mouth mask: mouths have characteristic redness (R > G, R > B)
-// regardless of darkness, which works on lips that aren't significantly darker
-// than skin in grayscale (Hsu et al. 2002 MouthMap approach)
-Mat_<uchar> mouthFeatureMask(Mat_<Vec3b> img, FaceGeometry face, float bandTopFrac, float bandBottomFrac) {
+// regardless of darkness — simplified approximation of the MouthMap concept
+// from Hsu et al. (2002), using raw BGR channels instead of YCbCr chrominance
+Mat_<uchar> mouthFeatureMask(Mat_<Vec3b> img, const FaceGeometry& face, float bandTopFrac, float bandBottomFrac) {
     int rTop = face.bbox.y + int(bandTopFrac * face.bbox.height);
     int rBottom = face.bbox.y + int(bandBottomFrac * face.bbox.height);
     int bboxLeft = face.bbox.x;
@@ -387,8 +392,8 @@ Mat_<uchar> mouthFeatureMask(Mat_<Vec3b> img, FaceGeometry face, float bandTopFr
 //   - symmetric         (equidistant from the midline)
 //   - sensible spacing  (fraction of face width)
 //   - similar area      (left and right eye are about the same size)
-// pick the lowest-scoring pair
-bool selectEyePair(vector<Component> comps, FaceGeometry face, Point& leftEye, Point& rightEye, const LandmarkParams& p) {
+// pick the lowest-scoring pair — discrete approximation of Saber & Tekalp (1998)
+bool selectEyePair(const vector<Component>& comps, const FaceGeometry& face, Point& leftEye, Point& rightEye, const LandmarkParams& p) {
     int   faceArea = face.bbox.area();
     float minArea = p.minCompAreaFrac * faceArea;
     float maxArea = p.maxCompAreaFrac * faceArea;
@@ -398,7 +403,7 @@ bool selectEyePair(vector<Component> comps, FaceGeometry face, Point& leftEye, P
 
     // keep only sensibly-sized components
     vector<Component> valid;
-    for (Component c : comps)
+    for (const Component& c : comps)
         if (c.area >= minArea && c.area <= maxArea)
             valid.push_back(c);
 
@@ -409,8 +414,8 @@ bool selectEyePair(vector<Component> comps, FaceGeometry face, Point& leftEye, P
 
     for (size_t i = 0; i < valid.size(); ++i) {
         for (size_t j = i + 1; j < valid.size(); ++j) {
-            Component a = valid[i];
-            Component b = valid[j];
+            const Component& a = valid[i];
+            const Component& b = valid[j];
 
             // must straddle the face vertical midline
             bool aLeft = a.cx < face.midCol;
@@ -434,7 +439,7 @@ bool selectEyePair(vector<Component> comps, FaceGeometry face, Point& leftEye, P
             double avgY = (a.cy + b.cy) / 2.0;
             double yReward = (avgY - face.bbox.y) / face.bbox.height; // 0..1
 
-            // lower is better, weights are empirical
+            // lower is better; weights are empirical
             double score = dy * 1.0
                 + asym * 1.0
                 + (1.0 - areaRatio) * 30.0
@@ -479,21 +484,22 @@ bool selectEyePair(vector<Component> comps, FaceGeometry face, Point& leftEye, P
 }
 
 // mouth = largest reddish blob in the lower band, near the midline
-bool selectMouth(vector<Component> comps, FaceGeometry face, Point& mouth, const LandmarkParams& p) {
+bool selectMouth(const vector<Component>& comps, const FaceGeometry& face, Point& mouth, const LandmarkParams& p) {
     int   faceArea = face.bbox.area();
     float minArea = p.minCompAreaFrac * faceArea;
-    float maxArea = 0.25f * faceArea;
+    float maxArea = p.maxMouthAreaFrac * faceArea;
 
     Component best;
     bool   found = false;
     double bestScore = -1;
-    for (Component c : comps) {
+    for (const Component& c : comps) {
         if (c.area < minArea || c.area > maxArea) continue;
 
         int width = c.maxC - c.minC + 1;
         int height = c.maxR - c.minR + 1;
-        if (height > width * 1.3) continue;
-        if (width < 0.15f * face.bbox.width || width > 0.90f * face.bbox.width) continue;
+        if (height > width * p.mouthAspectMaxRatio) continue;
+        if (width < p.mouthMinWidthFrac * face.bbox.width) continue;
+        if (width > p.mouthMaxWidthFrac * face.bbox.width) continue;
 
         // prefer blobs near the horizontal midline
         double horizPenalty = fabs(c.cx - face.midCol) / face.bbox.width;
@@ -502,12 +508,13 @@ bool selectMouth(vector<Component> comps, FaceGeometry face, Point& mouth, const
     }
     if (!found) return false;
 
-    // use top of blob rather than centroid — centroid is pulled down by chin/neck
+    // use top of blob rather than centroid — centroid is pulled down by
+    // chin/neck redness; minR lands closer to the upper lip
     mouth = Point((int)best.cx, best.minR);
     return true;
 }
 
-Landmarks detectLandmarks(Mat_<Vec3b> img, FaceGeometry face, const LandmarkParams& p) {
+Landmarks detectLandmarks(Mat_<Vec3b> img, const FaceGeometry& face, const LandmarkParams& p) {
     Landmarks lm;
 
     // eyes

@@ -31,39 +31,53 @@ struct FaceGeometry {
 
 // detected landmark points + flags (detection successful or not)
 struct Landmarks {
-    Point leftEye  = { -1, -1 };
+    Point leftEye = { -1, -1 };
     Point rightEye = { -1, -1 };
-    Point mouth    = { -1, -1 };
-    bool  eyesOk   = false;
-    bool  mouthOk  = false;
+    Point mouth = { -1, -1 };
+    bool  eyesOk = false;
+    bool  mouthOk = false;
 };
 
 // per-blob stats from a labeled image
 struct Component {
     int    label = 0;
-    int    area  = 0;
-    double cy    = 0;
-    double cx    = 0;
+    int    area = 0;
+    double cy = 0;
+    double cx = 0;
     int    minR = 0, maxR = 0;
     int    minC = 0, maxC = 0;
 };
 
 struct LandmarkParams {
-    int   strelKsize = 5;
+    // morphology
+    int   strelKsize = 5;             // opening kernel size (removes speckles)
+    int   closingKsize = 3;           // closing kernel size — smaller than opening
+    // intentionally: fills tiny gaps without
+    // filling eye/mouth holes
 
-    float eyeBandTop = 0.20f;
-    float eyeBandBottom = 0.55f;
-    int   eyeDarknessOffset = 15;
+    // eye search band, as fractions of face height from top of bbox
+    float eyeBandTop = 0.20f;         // skip forehead/hair
+    float eyeBandBottom = 0.55f;      // stop above the nose tip
+    int   eyeDarknessOffset = 15;     // how much darker than face mean (empirical)
 
+    // mouth search band
     float mouthBandTop = 0.68f;
     float mouthBandBottom = 0.90f;
 
+    // component area filter, as fractions of face bbox area
     float minCompAreaFrac = 0.0003f;
     float maxCompAreaFrac = 0.05f;
 
+    // eye-pair geometry, as fractions of face width/height
     float minEyeSepFrac = 0.20f;
     float maxEyeSepFrac = 0.65f;
     float maxEyeDyFrac = 0.10f;
+
+    // mouth geometry
+    float maxMouthAreaFrac = 0.25f;    // redness blobs can be large
+    float mouthAspectMaxRatio = 1.3f;  // max height/width — mouths are wider than tall
+    float mouthMinWidthFrac = 0.15f;   // min width as fraction of face width
+    float mouthMaxWidthFrac = 0.90f;   // max width as fraction of face width
 };
 
 // ============================================================================
@@ -82,19 +96,19 @@ Mat_<uchar>         closing(Mat_<uchar> src, int ksize);
 vector<Component>   componentStats(Mat_<int> labels, Mat_<uchar> mask);
 bool                isInsideFace(const Mat_<uchar>& faceMask, int i, int j, int bboxLeft, int bboxRight);
 void                drawCross(Mat& img, Point p, Scalar color, int sz = 10);
-Mat_<Vec3b>         drawLandmarks(Mat_<Vec3b> img, FaceGeometry face, Landmarks lm);
-FaceGeometry        extractFace(Mat_<uchar> skinMask, int strelKsize);
-Mat_<uchar>         darkFeatureMask(Mat_<Vec3b> img, FaceGeometry face, float bandTopFrac, float bandBottomFrac, int darknessOffset);
-Mat_<uchar>         mouthFeatureMask(Mat_<Vec3b> img, FaceGeometry face, float bandTopFrac, float bandBottomFrac);
-bool                selectEyePair(vector<Component> comps, FaceGeometry face, Point& leftEye, Point& rightEye, const LandmarkParams& p);
-bool                selectMouth(vector<Component> comps, FaceGeometry face, Point& mouth, const LandmarkParams& p);
-Landmarks           detectLandmarks(Mat_<Vec3b> img, FaceGeometry face, const LandmarkParams& p);
+Mat_<Vec3b>         drawLandmarks(Mat_<Vec3b> img, const FaceGeometry& face, const Landmarks& lm);
+FaceGeometry        extractFace(Mat_<uchar> skinMask, const LandmarkParams& p);
+Mat_<uchar>         darkFeatureMask(Mat_<Vec3b> img, const FaceGeometry& face, float bandTopFrac, float bandBottomFrac, int darknessOffset);
+Mat_<uchar>         mouthFeatureMask(Mat_<Vec3b> img, const FaceGeometry& face, float bandTopFrac, float bandBottomFrac);
+bool                selectEyePair(const vector<Component>& comps, const FaceGeometry& face, Point& leftEye, Point& rightEye, const LandmarkParams& p);
+bool                selectMouth(const vector<Component>& comps, const FaceGeometry& face, Point& mouth, const LandmarkParams& p);
+Landmarks           detectLandmarks(Mat_<Vec3b> img, const FaceGeometry& face, const LandmarkParams& p);
 
 // ============================================================================
 // Approach entry points (one per approach .cpp)
 // ============================================================================
 
-void runApproach1(const string& path);   // HSV skin + darkness/redness features
+void runApproach1(const string& path);
 void runApproach2(const string& path);
 
 // ============================================================================

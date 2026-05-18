@@ -92,7 +92,7 @@ static Mat_<uchar> regionGrowing(const Mat_<Vec3b>& img, Point seed) {
 
 // auto-seed version for evaluation — samples from upper-center of image
 Mat_<uchar> detectSkinAutoSeed(Mat_<Vec3b> img) {
-    Point seed(img.cols / 2, img.rows / 2); 
+    Point seed(img.cols / 2, img.rows / 2);     
     return regionGrowing(img, seed);
 }
 
@@ -112,7 +112,7 @@ void runApproach2(const string& path) {
     LandmarkParams p;  // default params — tune later if needed
     p.mouthBandBottom = 0.95f;
     p.mouthBandTop = 0.8f;
-    FaceGeometry face = extractFace(skin, p.strelKsize);
+    FaceGeometry face = extractFace(skin, p);
     if (!face.valid) { cout << "No face found.\n"; return; }
 
     Landmarks   lm = detectLandmarks(img, face, p);

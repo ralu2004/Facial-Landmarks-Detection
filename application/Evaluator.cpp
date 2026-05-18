@@ -65,7 +65,7 @@ EvalResult runEvaluation(const string& annotationFile, const string& imageRoot, 
 		}
 
 		Mat_<uchar> skin = skinDetector(img);
-		FaceGeometry face = extractFace(skin, p.strelKsize);
+		FaceGeometry face = extractFace(skin, p);
 		if (!face.valid) continue;
 
 		Landmarks lm = detectLandmarks(img, face, p);
@@ -141,7 +141,7 @@ EvalResult runEvaluationGTSeed(
 		);
 
 		Mat_<uchar> skin = regionGrowingPublic(img, gtSeed);
-		FaceGeometry face = extractFace(skin, p.strelKsize);
+		FaceGeometry face = extractFace(skin, p);
 		if (!face.valid) continue;
 
 		Landmarks lm = detectLandmarks(img, face, p);
