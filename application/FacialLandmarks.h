@@ -110,6 +110,7 @@ Landmarks           detectLandmarks(Mat_<Vec3b> img, const FaceGeometry& face, c
 
 void runApproach1(const string& path);
 void runApproach2(const string& path);
+void runApproach3(const string& path);
 
 // ============================================================================
 // Evaluation wrappers

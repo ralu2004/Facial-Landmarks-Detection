@@ -170,3 +170,90 @@ EvalResult runEvaluationGTSeed(
 	}
 	return result;
 }
+
+EvalResult runEvaluationVJ(
+	const string& annotationFile,
+	const string& imageRoot,
+	const string& cascadePath,
+	int maxImages,
+	const LandmarkParams& p)
+{
+	EvalResult result;
+
+	CascadeClassifier cascade;
+	if (!cascade.load(cascadePath)) {
+		cout << "Could not load cascade: " << cascadePath << "\n";
+		return result;
+	}
+
+	ifstream file(annotationFile);
+	if (!file.is_open()) {
+		cout << "Cannot open annotation file: " << annotationFile << "\n";
+		return result;
+	}
+
+	double totalNME = 0;
+	int    failures = 0;
+	string line;
+
+	while (getline(file, line) && result.total < maxImages) {
+		size_t start = line.find_first_not_of(" \t\r\n");
+		if (start == string::npos) continue;
+		line = line.substr(start);
+		if (line.empty()) continue;
+
+		GTLandmarks gt;
+		if (!parseLine(line, imageRoot, gt)) continue;
+		result.total++;
+
+		Mat_<Vec3b> img = imread(gt.imagePath, IMREAD_COLOR);
+		if (img.empty()) continue;
+
+		// VJ face detection — no skin mask needed
+		Mat_<uchar> gray = convertToGray(img);
+		vector<Rect> faces;
+		cascade.detectMultiScale(gray, faces, 1.1, 4, 0, Size(60, 60));
+		if (faces.empty()) continue;
+
+		// largest face
+		Rect best = faces[0];
+		for (const Rect& r : faces)
+			if (r.area() > best.area()) best = r;
+
+		FaceGeometry face;
+		face.bbox = best;
+		face.midRow = best.y + best.height / 2;
+		face.midCol = best.x + best.width / 2;
+		face.valid = true;
+		face.mask = Mat_<uchar>(img.size(), (uchar)0);
+		face.skinOnly = Mat_<uchar>(img.size(), (uchar)0);
+		for (int i = best.y; i < best.y + best.height; ++i)
+			for (int j = best.x; j < best.x + best.width; ++j)
+				face.mask(i, j) = 255;
+
+		Landmarks lm = detectLandmarks(img, face, p);
+		if (!lm.eyesOk) continue;
+		result.detected++;
+
+		double iod = gt.interocularDistance();
+		if (iod < 1.0) continue;
+
+		double nme = 0;
+		nme += pointNME(lm.leftEye, gt.leftEye, iod);
+		nme += pointNME(lm.rightEye, gt.rightEye, iod);
+		nme /= 2;
+
+		totalNME += nme;
+		if (nme > 0.1) failures++;
+
+		if (result.total % 10 == 0)
+			cout << "Evaluated " << result.total << "/" << maxImages
+			<< "  mean NME: " << totalNME / result.detected << "\n";
+	}
+
+	if (result.detected > 0) {
+		result.meanNME = totalNME / result.detected;
+		result.failureRate = (double)failures / result.detected * 100.0;
+	}
+	return result;
+}

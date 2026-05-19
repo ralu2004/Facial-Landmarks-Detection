@@ -522,7 +522,11 @@ Landmarks detectLandmarks(Mat_<Vec3b> img, const FaceGeometry& face, const Landm
         Mat_<uchar>       eyeMask = darkFeatureMask(img, face, p.eyeBandTop, p.eyeBandBottom, p.eyeDarknessOffset);
         Mat_<int>         eyeLabels = twoPassLabeling(eyeMask);
         vector<Component> comps = componentStats(eyeLabels, eyeMask);
+        /*cout << "eye comps: " << comps.size() << "\n";
+        for (auto& c : comps)
+            cout << "  area=" << c.area << " cx=" << (int)c.cx << " cy=" << (int)c.cy << "\n";*/
         lm.eyesOk = selectEyePair(comps, face, lm.leftEye, lm.rightEye, p);
+       // imshow("A3 eye mask", eyeMask);
     }
 
     // mouth
@@ -531,6 +535,7 @@ Landmarks detectLandmarks(Mat_<Vec3b> img, const FaceGeometry& face, const Landm
         Mat_<int>         mouthLabels = twoPassLabeling(mouthMask);
         vector<Component> comps = componentStats(mouthLabels, mouthMask);
         lm.mouthOk = selectMouth(comps, face, lm.mouth, p);
+       // imshow("A3 mouth mask", mouthMask);
     }
 
     return lm;

@@ -226,6 +226,7 @@ corner annotations.
 | A1 — HSV skin | 69.7% | 1.121 | 100% |
 | A2 — center seed | 57.8% | 0.776 | 100% |
 | A2 — GT seed (upper bound) | 69.3% | 0.786 | 100% |
+| A3 — Viola-Jones | 95.6% | 0.735 | 100% |
 
 ### Key findings
 
@@ -254,6 +255,13 @@ this strict threshold. The primary causes:
 - The symmetry scoring selects approximate eye locations, not
   precise pupil centers
 - No subpixel refinement
+
+**A3 confirms the bottleneck finding:** Viola-Jones achieves 95.6% 
+detection rate — significantly better than A1 (69.7%) and A2 (57.8%) 
+— because it uses a trained appearance model rather than hand-crafted 
+skin detection. However, NME remains at 0.735, comparable to A2 
+(0.776). This confirms that landmark localization — not face detection 
+— is the primary source of error across all three approaches.
 
 ---
 
@@ -373,9 +381,12 @@ Annotations: https://ibug.doc.ic.ac.uk/resources/facial-point-annotations/
 
 ## What would improve results
 
-- **Viola-Jones face detector** (OpenCV `CascadeClassifier`) —
-  reliable bounding box without skin detection, removes the entire
-  skin-detection failure mode
+- **Full Viola-Jones pipeline (Approach 4)** — use `haarcascade_eye.xml` 
+  and `haarcascade_mcs_mouth.xml` in addition to face detection. Eyes 
+  and mouth located by trained classifiers rather than darkness/redness 
+  thresholds. Would directly address the landmark localization bottleneck.
+- **Adaptive thresholding** — Otsu's method per-band rather than 
+  fixed `mean - offset` for eye darkness detection.
 - **Multi-color-space skin** — AND HSV with YCbCr thresholds, as in
   [4], significantly more robust across skin tones
 - **Adaptive thresholding** — Otsu's method per-band rather than

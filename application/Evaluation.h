@@ -53,3 +53,11 @@ EvalResult runEvaluationGTSeed(
     int maxImages,
     const LandmarkParams& p
 );
+
+EvalResult runEvaluationVJ(
+    const string& annotationFile,
+    const string& imageRoot,
+    const string& cascadePath,
+    int maxImages,
+    const LandmarkParams& p
+);
