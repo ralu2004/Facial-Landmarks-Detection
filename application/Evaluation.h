@@ -15,6 +15,12 @@ struct GTLandmarks {
     Point  mouthLeft;
     Point  mouthRight;
 
+    // image metadata from annotation file
+    int pose;    // 1=frontal, 2=left profile, 3=right profile, 4=upward, 5=downward
+    int smile;   // 1=smiling, 2=not smiling
+    int glasses; // 1=with glasses, 2=without glasses
+    int gender;  // 1=male, 2=female
+
     // mouth center — average of left and right mouth corners
     // this is what we compare against the detected single mouth point
     Point mouthCenter() const {
@@ -45,10 +51,10 @@ struct EvalResult {
     int    total = 0;            // total annotation lines attempted
 };
 
-EvalResult runEvaluation(const string& annotationFile, const string& imageRoot, int maxImages, function<Mat_<uchar>(Mat_<Vec3b>)> skinDetector, const LandmarkParams& p);
+EvalResult runEvaluation(const string& annotationFile, const string& imageRoot, int maxImages, function<Mat_<uchar>(Mat_<Vec3b>)> skinDetector, const LandmarkParams& p, const string& csvPath = "");
 
-EvalResult runEvaluationGTSeed(const string& annotationFile, const string& imageRoot, int maxImages, const LandmarkParams& p);
+EvalResult runEvaluationGTSeed(const string& annotationFile, const string& imageRoot, int maxImages, const LandmarkParams& p, const string& csvPath = "");
 
-EvalResult runEvaluationVJ(const string& annotationFile, const string& imageRoot, const string& cascadePath, int maxImages, const LandmarkParams& p);
+EvalResult runEvaluationVJ(const string& annotationFile, const string& imageRoot, const string& cascadePath, int maxImages, const LandmarkParams& p, const string& csvPath = "");
 
-EvalResult runEvaluationVJFull(const string& annotationFile, const string& imageRoot, const string& faceCascadePath, const string& eyeCascadePath, const string& mouthCascadePath, int maxImages);
+EvalResult runEvaluationVJFull(const string& annotationFile, const string& imageRoot, const string& faceCascadePath, const string& eyeCascadePath, const string& mouthCascadePath, int maxImages, const string& csvPath = "");

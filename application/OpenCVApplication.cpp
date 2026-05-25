@@ -43,8 +43,8 @@ int main() {
         }
     }
     else if (choice >= 5) {
-        string annotationFile, imageRoot;
-        int    maxImages;
+        string annotationFile, imageRoot, csvPath;
+        int maxImages;
 
         cin.ignore();
 
@@ -58,13 +58,16 @@ int main() {
         cin >> maxImages;
         cin.ignore();
 
+        cout << "Output CSV path (leave empty to skip): ";
+        getline(cin, csvPath);
+
         EvalResult result;
 
         if (choice == 5) {
             // A1: HSV + YCbCr skin + Otsu eye threshold
             LandmarkParams a1Params;
             a1Params.useOtsu = true;
-            result = runEvaluation(annotationFile, imageRoot, maxImages, detectSkinHSV, a1Params);
+            result = runEvaluation(annotationFile, imageRoot, maxImages, detectSkinHSV, a1Params, csvPath);
         }
         else if (choice == 6) {
             // A2: region growing, custom mouth band, no Otsu
@@ -72,7 +75,7 @@ int main() {
             a2Params.mouthBandBottom = 0.95f;
             a2Params.mouthBandTop = 0.80f;
             a2Params.useOtsu = false;
-            result = runEvaluation(annotationFile, imageRoot, maxImages, detectSkinAutoSeed, a2Params);
+            result = runEvaluation(annotationFile, imageRoot, maxImages, detectSkinAutoSeed, a2Params, csvPath);
         }
         else if (choice == 7) {
             // A2 upper bound: GT seed, same params as A2
@@ -80,7 +83,7 @@ int main() {
             a2Params.mouthBandBottom = 0.95f;
             a2Params.mouthBandTop = 0.80f;
             a2Params.useOtsu = false;
-            result = runEvaluationGTSeed(annotationFile, imageRoot, maxImages, a2Params);
+            result = runEvaluationGTSeed(annotationFile, imageRoot, maxImages, a2Params, csvPath);
         }
         else if (choice == 8) {
             // A3: VJ face + classical landmarks, stricter darkness offset, no Otsu
@@ -89,7 +92,7 @@ int main() {
             a3Params.useOtsu = false;
             result = runEvaluationVJ(annotationFile, imageRoot,
                 "data/haarcascade_frontalface_default.xml",
-                maxImages, a3Params);
+                maxImages, a3Params, csvPath);
         }
         else if (choice == 9) {
             // A4: full VJ pipeline 
@@ -98,7 +101,7 @@ int main() {
                 "data/haarcascade_frontalface_default.xml",
                 "data/haarcascade_eye.xml",
                 "data/haarcascade_mcs_mouth.xml",
-                maxImages);
+                maxImages, csvPath);
         }
 
         cout << "\n=== Results ===\n";
@@ -109,6 +112,9 @@ int main() {
         cout << "Mouth NME:       " << result.mouthNME << "\n";
         cout << "Combined NME:    " << result.meanNME << "\n";
         cout << "Failure rate:    " << result.failureRate << "%\n";
+
+        if (!csvPath.empty())
+            cout << "Results saved to: " << csvPath << "\n";
     }
 
     return 0;
