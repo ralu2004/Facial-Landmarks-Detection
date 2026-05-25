@@ -427,4 +427,6 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
 application/OpenCV/
+
