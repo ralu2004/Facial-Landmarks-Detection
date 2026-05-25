@@ -1,8 +1,8 @@
 # Facial Landmarks Detection
 
-Classical facial landmark detection in C++ using OpenCV.
-Detects eyes and mouth on face images using two independent approaches,
-evaluated on the MTFL dataset with Normalized Mean Error (NME).
+Classical (non-ML) facial landmark detection in C++ using OpenCV.
+Detects eyes and mouth on face images using four approaches, evaluated
+on the MTFL dataset with Normalized Mean Error (NME).
 
 ---
 
@@ -22,37 +22,59 @@ Input image
 
 The pipeline structure follows Hsu, Abdel-Mottaleb & Jain (2002) [1]:
 skin detection → face candidate → feature map → landmark selection.
-The two approaches differ only in how the skin/face mask is produced.
-Everything from `extractFace` onward is shared code.
+Approaches 1–3 share the landmark pipeline from `extractFace` onward.
+Approach 4 replaces the landmark pipeline entirely with cascade detectors.
 
 ---
 
 ## Project structure
 
 ```
-OpenCVApplication.cpp     — interactive menu, dispatches to approaches
-FacialLandmarks.h         — shared types (FaceGeometry, Landmarks,
-                            Component, LandmarkParams) + declarations
-FacialLandmarksUtils.cpp  — shared primitives and full landmark pipeline
-Approach1_HSV.cpp         — Approach 1: HSV skin thresholding
-Approach2_Interactive.cpp — Approach 2: region growing from user click
-Evaluation.h              — GTLandmarks, EvalResult structs
-Evaluator.cpp             — MTFL parser, NME computation, eval loop
+application/
+    OpenCVApplication.cpp        — interactive menu, dispatches to approaches
+    FacialLandmarks.h            — shared types (FaceGeometry, Landmarks,
+                                   Component, LandmarkParams) + declarations
+    FacialLandmarksUtils.cpp     — shared primitives and full landmark pipeline
+    Approach1_HSV.cpp            — Approach 1: HSV + YCbCr skin detection
+    Approach2_Interactive.cpp    — Approach 2: region growing from user click
+    Approach3_ViolaJones.cpp     — Approach 3: VJ face + classical landmarks
+    Approach4_ViolaJonesFull.cpp — Approach 4: full VJ pipeline
+    Evaluation.h                 — GTLandmarks, EvalResult structs
+    Evaluator.cpp                — MTFL parser, NME computation, eval loops
+    data/
+        haarcascade_frontalface_default.xml
+        haarcascade_eye.xml
+        haarcascade_mcs_mouth.xml
+        haarcascade_eye_tree_eyeglasses.xml
+
+analysis/
+    analyze_results.py           — stratified analysis + chart generation
+    extract_frontal.py           — filter MTFL annotations by pose==1
+    plot_*.png                   — generated charts
+
+results/
+    results_A1.csv               — per-image results for each approach
+    results_A2.csv
+    results_A2_upper_bound.csv
+    results_A3.csv
+    results_A4.csv
+    results_A*_frontal.csv       — same, filtered to frontal images only
+    frontal_only.txt             — MTFL annotation subset: pose==1 (136 images)
 ```
 
 ---
 
-## Approach 1 — HSV skin detection
+## Approach 1 — HSV + YCbCr skin detection
 
 ### What it does
-Converts BGR to HSV manually, then classifies each pixel as skin if:
+Classifies each pixel as skin if it passes **both** HSV and YCbCr
+thresholds simultaneously:
 ```
-H ∈ [0, 25]   (hue — skin tones, 0–180 scale)
-S ∈ [40, 255] (saturation — excludes near-grey pixels)
-V ∈ [60, 255] (value — excludes very dark pixels)
+HSV:   H ∈ [0, 25], S ∈ [40, 255], V ∈ [60, 255]
+YCbCr: Cr ∈ [133, 173], Cb ∈ [77, 127]
 ```
 The largest connected component of the cleaned skin mask is taken as
-the face.
+the face. Eye detection uses Otsu's adaptive threshold.
 
 ### Why HSV
 RGB mixes luminance and chrominance, making skin look very different
@@ -61,12 +83,22 @@ independently of brightness, saturation distinguishes vivid colors
 from grey shadows. This is the standard justification in the skin
 detection literature [2][3].
 
+### Why YCbCr in addition
+HSV alone produces false positives on warm-toned backgrounds. Adding
+YCbCr thresholds — which separate luminance from chrominance differently
+— significantly reduces these false positives. A pixel must satisfy
+both color spaces to be classified as skin, following the multi-color-space
+approach of Rahmat et al. (2016) [4].
+
+### Why Otsu for eye detection
+With the HSV+YCbCr mask, the face region has a more varied intensity
+distribution. Otsu's method [6] automatically finds the optimal darkness
+threshold by maximizing between-class variance on the face region's
+grayscale histogram — better than a fixed `mean - offset` for this approach.
+
 ### Threshold values
-**Empirically tuned**, informed by ranges reported in [3][4]. The
-specific values `H ≤ 25, S ≥ 40, V ≥ 60` are not lifted from any
-single paper — they were selected by testing on dataset images. 
-Different datasets may require different values. This is a known 
-limitation of fixed-threshold approaches [2].
+HSV values **empirically tuned**, informed by ranges in [3][4].
+YCbCr thresholds taken directly from Rahmat et al. (2016) [4].
 
 ---
 
@@ -81,187 +113,229 @@ of the seed:
 ΔS < 40   (saturation)
 ΔV < 50   (value — loose, accounts for lighting variation across face)
 ```
-The resulting mask is then processed identically to Approach 1.
+The resulting mask is processed identically to Approach 1, but eye
+detection uses `mean - offset` (not Otsu) since region growing already
+produces a well-bounded face mask.
 
 ### Why region growing
 Region growing is a classical segmentation technique from Gonzalez &
-Woods [6], Chapter 10. Unlike fixed HSV thresholds, it adapts to the
-specific image — the seed pixel's color becomes the reference, so
-any skin tone or lighting condition is handled automatically, as long
-as the seed is on skin.
+Woods [6], Chapter 10. Unlike fixed thresholds, it adapts to each
+image — the seed pixel's color becomes the reference, handling any
+skin tone or lighting automatically, as long as the seed is on skin.
 
 ### Tolerance values
-**Empirically chosen.** The V tolerance is intentionally loose (50)
-because the same face can have intensity variation of 60+ between
-forehead and cheek due to lighting. The H tolerance (10) is tighter
-because hue is more stable across the face. No single citation
-specifies these exact values for skin; they were tuned on the test
-images.
+**Empirically chosen.** V tolerance is loose (50) because the same
+face can vary 60+ intensity units between forehead and cheek. H
+tolerance (10) is tighter because hue is more stable across the face.
 
 ### GT seed experiment
-To isolate the contribution of seed selection vs landmark localization,
-we also ran Approach 2 with the ground truth eye midpoint as seed
-(theoretical upper bound). Results were almost identical to the center
-seed (see Evaluation results), confirming that **seed quality is not
-the primary bottleneck** — the landmark localization is.
+Running A2 with the ground truth eye midpoint as seed (theoretical
+upper bound) improved detection rate but left NME essentially unchanged,
+confirming that **seed quality is not the primary bottleneck** — the
+landmark localization is.
+
+---
+
+## Approach 3 — Viola-Jones face detection + classical landmarks
+
+### What it does
+Uses OpenCV's `CascadeClassifier` with `haarcascade_frontalface_default.xml`
+to detect the face bounding box. Eyes and mouth are then found using
+the same classical pipeline as A1/A2, with a stricter darkness offset
+(`eyeDarknessOffset = 40`) since there is no skin mask to exclude skin
+pixels. Eye detection uses `mean - offset` (not Otsu).
+
+### Why Viola-Jones for face detection
+The Viola-Jones algorithm (2001) [11] uses Haar-like features, integral
+images for O(1) feature evaluation, AdaBoost feature selection, and a
+cascade classifier to rapidly reject non-face windows. Trained on
+thousands of face images, it is robust to lighting and skin tone
+variation that defeats hand-crafted thresholds.
+
+### Key difference from A1/A2
+No skin detection step. The face bounding box comes directly from the
+cascade, giving `skinOnly = all zeros` — `darkFeatureMask` examines
+every pixel inside the bbox.
+
+---
+
+## Approach 4 — Full Viola-Jones pipeline
+
+### What it does
+Extends Approach 3 by replacing classical landmark detection with two
+additional Haar cascades:
+- `haarcascade_eye.xml` — detects eyes in the upper half of the face
+  ROI (minNeighbors = 2)
+- `haarcascade_mcs_mouth.xml` — detects mouth in the lower half
+  (minNeighbors = 11, strict to reduce false positives)
+
+The two largest eye detections are taken as left/right eye. The largest
+mouth detection is the mouth point.
+
+### Trade-off vs Approach 3
+A4 achieves lower NME when it detects both eyes, because trained
+cascades locate eye centers more precisely than darkness thresholding.
+However, detection rate is lower because the eye cascade requires good
+frontal alignment — conditions that VJ face detection alone does not
+require. This is the classic precision-recall trade-off.
+
+### Cascade source
+The MCS mouth cascade was authored by Castrillón-Santana, University
+of Las Palmas de Gran Canaria, trained on 7000 positive samples [12].
 
 ---
 
 ## Shared landmark pipeline
 
 ### Face extraction (`extractFace`)
-After the skin mask is produced, morphological cleanup is applied:
-- **Opening** (erode then dilate) removes small speckles — hands,
-  neck patches, background noise. 
-- **Closing** (dilate then erode) fills small holes so the face is
-  one connected component — eyes, mouth, glasses frames appear as
-  holes in the skin mask.
+- **Opening** (erode then dilate) removes speckles. Gonzalez & Woods [6], Ch. 9.
+- **Closing** (dilate then erode) fills holes so the face is one
+  connected component.
 
-Order matters: opening first, then closing. Opening first removes
-noise that closing would otherwise amplify.
+Order matters: opening first removes noise that closing would amplify.
+A **circular structuring element** is used for isotropy.
 
-A **circular structuring element** is used (not square) because it
-treats all directions equally, as appropriate for a rotationally 
-symmetric object like a face.
-
-`skinOnly` stores the opened-only mask (before closing). This
-preserves eye/mouth holes for downstream feature detection, while
-`mask` (after closing) is used for the face region boundary. This
-separation is necessary because closing fills the eye holes that
-the feature detectors depend on.
+`skinOnly` stores the opened-only mask, preserving eye/mouth holes
+for feature detection. `mask` (post-closing) defines the face boundary.
 
 ### Eye detection (`darkFeatureMask` + `selectEyePair`)
 
-**Feature mask:** inside the eye band (20–55% of face height from
-top of bbox), pixels that are:
-1. Not classified as skin in `skinOnly`
-2. Inside the face contour (`isInsideFace` scanline test)
-3. Darker than `faceMean - 15` in grayscale
+**Feature mask:** inside the eye band (20–55% of face height), pixels
+that are not classified as skin, inside the face contour (scanline
+test), and darker than the threshold.
 
-The darkness threshold is **empirically tuned** to `15`. Higher
-values (stricter) missed light-colored eyes; lower values let in too
-much skin shadow. The face-mean-relative threshold (rather than a
-fixed value) adapts to per-image brightness.
+**Otsu's method** (A1): maximizes between-class variance on face pixels.
+**Mean-offset** (A2/A3): `threshold = faceMean - offset`. Works better
+when the face mask is already tight and the histogram is not strongly
+bimodal.
 
-The **eye band fractions** `[0.20, 0.55]` are anthropometrically
-motivated — eyes are anatomically in the upper half of the face,
-below the hairline. The specific fractions are empirically tuned,
-informed by the proportions in Farkas (1994) [9].
-
-**Eye pair selection:** every candidate component pair is scored:
+**Eye pair selection** scores every candidate pair:
 ```
-score = |Δy| × 1.0
-      + asymmetry × 1.0
-      + (1 - areaRatio) × 30.0
-      - yReward × 5.0
+score = |Δy| × 1.0 + asymmetry × 1.0 + (1 - areaRatio) × 30.0 - yReward × 5.0
 ```
-Lower score = better pair. The scoring concept — using bilateral
-facial symmetry as a cost function — follows Saber & Tekalp (1998)
-[5], who introduced symmetry-based cost functions for eye/nose/mouth
-localization. Our implementation is a **discrete approximation**:
-rather than a continuous pixel-level symmetry energy, we score
-connected component pairs. The weights (1.0, 30.0, 5.0) are
-**empirical** — tuned so that area dissimilarity is the dominant
-term (eyes are the same size), with position terms as tiebreakers.
-
-Hard constraints (not scored, just filtered):
-- Must straddle the face vertical midline (left and right eye)
-- `|Δy| ≤ 10%` of face height (eyes are level)
-- Separation ∈ `[20%, 65%]` of face width (interpupillary distance)
-  — anthropometric range from Farkas [9]
-
-**Single-eye fallback:** if no valid pair is found, the best single
-candidate is mirrored across the face midline. This handles partial
-occlusion and asymmetric lighting.
+Concept from Saber & Tekalp (1998) [5]; weights are **empirical**.
+Hard constraints: must straddle face midline; `|Δy| ≤ 10%` of face
+height; separation ∈ `[20%, 65%]` of face width (Farkas [9]).
 
 ### Mouth detection (`mouthFeatureMask` + `selectMouth`)
 
-**Feature mask:** in the mouth band (68–90% of face height), pixels
-where `R - G > 30 AND R > B`. This detects redness characteristic
-of lips. The approach is inspired by the MouthMap concept from Hsu
-et al. [1], which uses chrominance to detect mouths. Our
-implementation is a **simplified approximation** using raw BGR
-channels instead of the full YCbCr chrominance ratio.
+**Feature mask:** mouth band (68–90% for A1/A3, 80–95% for A2), pixels
+where `R - G > 30 AND R > B`. Simplified approximation of MouthMap [1].
 
-The threshold `R - G > 30` is **empirically tuned** — lower values
-let in too much cheek/chin redness, higher values missed pale lips.
-
-**Mouth selection:** largest redness blob near the face midline,
-wider than tall (lips are wider than they are tall), width between
-15% and 90% of face width.
-
-The mouth y-coordinate uses `blob.minR` (top of blob) rather than
-the centroid. This is an **empirical correction** — the large
-redness region's centroid is systematically pulled below the lips
-by chin and neck pixels. Using the top of the blob places the mark
-closer to the upper lip.
+**Selection:** largest redness blob near midline, wider than tall, width
+between 15% and 90% of face width. Y-coordinate uses `blob.minR` — top
+of blob rather than centroid, which is pulled below lips by chin/neck.
 
 ---
 
 ## Evaluation
 
 ### Metric — Normalized Mean Error (NME)
+Eye NME and Mouth NME are computed separately:
 ```
-NME = (1/N) × Σ ||detected_i − gt_i|| / IOD
+Eye NME   = mean(||leftEye_det - leftEye_gt|| / IOD,
+                 ||rightEye_det - rightEye_gt|| / IOD)
+Mouth NME = ||mouth_det - mouthCenter_gt|| / IOD  (when detected)
+Combined  = mean(Eye NME, Mouth NME)              (when both detected)
 ```
-where `IOD` = inter-ocular distance (Euclidean distance between
-ground truth eye centers). Normalizing by IOD makes the error
-scale-independent across different image sizes and face scales.
-**Failure threshold:** NME > 0.1 (standard in the 300-W benchmark
-[10]).
+where `IOD` = inter-ocular distance between ground truth eye centers.
+**Failure threshold:** NME > 0.1 (standard in 300-W benchmark [10]).
 
 ### Dataset — MTFL
-12,995 face images annotated with 5 landmarks: left eye, right eye,
-nose, left mouth corner, right mouth corner [8]. Download:
+12,995 face images annotated with 5 landmarks [8]. Download:
 `http://mmlab.ie.cuhk.edu.hk/projects/TCDCN/data/MTFL.zip`
 
-We compare our detected `leftEye`, `rightEye` against the MTFL
-eye annotations, and `mouth` against the midpoint of the two mouth
-corner annotations.
+Pose distribution in full dataset: 74.4% right profile, 11.1% left
+profile, 11.1% upward, 2.0% downward, **1.4% frontal (136 images)**.
+The dataset is heavily skewed toward non-frontal — see
+`analysis/plot_pose_distribution.png`.
 
-### Results (1000 images from `training.txt`)
+We evaluate on 2000 images from `training.txt` (all poses) and
+separately on the 136 frontal images (`results/frontal_only.txt`).
 
-| Approach | Detection rate | Mean NME | Failure rate |
-|---|---|---|---|
-| A1 — HSV skin | 69.7% | 1.121 | 100% |
-| A2 — center seed | 57.8% | 0.776 | 100% |
-| A2 — GT seed (upper bound) | 69.3% | 0.786 | 100% |
-| A3 — Viola-Jones | 95.6% | 0.735 | 100% |
+### Results — all poses (2000 images)
+
+| Approach | Eye det.% | Mouth det.% | Eye NME | Mouth NME | Combined NME |
+|---|---|---|---|---|---|
+| A1 — HSV+YCbCr+Otsu | 72.1% | 63.0% | 1.121 | 0.803 | 0.982 |
+| A2 — center seed | 57.7% | 50.2% | 0.801 | 0.717 | 0.765 |
+| A2 — GT seed (upper bound) | 68.7% | 58.8% | 0.796 | 0.802 | 0.800 |
+| A3 — VJ+classical | 95.5% | 78.3% | 0.743 | 0.324 | 0.568 |
+| A4 — VJ full | 39.6% | 35.9% | 0.685 | 0.403 | 0.559 |
+
+### Results — frontal only (136 images, pose==1)
+
+| Approach | Eye det.% | Mouth det.% | Eye NME | Mouth NME | Combined NME |
+|---|---|---|---|---|---|
+| A1 — HSV+YCbCr+Otsu | 64.0% | 53.7% | 2.262 | 2.080 | 2.187 |
+| A2 — center seed | 58.8% | 49.3% | 1.940 | 1.601 | 1.776 |
+| A2 — GT seed (upper bound) | 51.5% | 43.4% | 1.864 | 1.672 | 1.768 |
+| A3 — VJ+classical | 74.3% | 61.8% | 1.522 | 0.581 | 1.150 |
+| A4 — VJ full | 16.2% | 14.0% | 1.091 | 0.570 | 0.886 |
 
 ### Key findings
 
-**A2 outperforms A1 on NME** (0.776 vs 1.121) when it detects a
-face. Region growing produces a cleaner face mask because it adapts
-to each image's actual skin color rather than applying fixed thresholds.
+**A3 dominates on detection rate** (95.5%) across all poses. Viola-Jones
+face detection is robust to pose and lighting variation that defeats
+hand-crafted skin detection. This directly confirms that trained appearance
+models outperform classical thresholding for face localization.
 
-**Detection rate trade-off:** A1 detects more faces (69.7% vs 57.8%)
-because its fixed HSV thresholds reliably find *some* skin on most
-images, even if the resulting mask is noisy. A2's center seed
-occasionally misses the face entirely.
+**A4 best NME, worst detection rate.** A4's eye cascade achieves the
+lowest eye NME (0.685) and mouth NME (0.403) when it detects — cascade
+detectors are more accurate than darkness/redness thresholding. But
+detection rate collapses to 39.6% because the eye cascade requires good
+frontal alignment. Classic precision-recall trade-off.
 
-**GT seed experiment:** Using the ground truth eye midpoint as seed
-improves A2's detection rate to 69.3% (matching A1) but leaves NME
-unchanged (0.786 ≈ 0.776). This confirms that the seed selection
-is not the primary source of error — **the landmark localization
-algorithm itself is the bottleneck**.
+**A3 mouth NME (0.324) significantly better than eyes (0.743).** On
+well-detected faces with reliable bounding boxes, redness-based mouth
+detection outperforms darkness-based eye detection. Mouth color is a
+more discriminative feature than relative darkness within the face bbox.
 
-**100% failure rate:** Neither approach reaches NME < 0.1 on any
-image. The 0.1 threshold corresponds to error < 10% of inter-ocular
-distance — roughly 3px on a 250×250 image with 30px IOD. Our
-detections are in the right face region but not precise enough for
-this strict threshold. The primary causes:
-- Fixed redness/darkness thresholds are not robust across diverse
-  faces, lighting, and facial hair
-- The symmetry scoring selects approximate eye locations, not
-  precise pupil centers
-- No subpixel refinement
+**GT seed experiment isolates the bottleneck.** A2 with GT seed improves
+detection rate (57.7% → 68.7%) but leaves eye NME essentially unchanged
+(0.801 → 0.796). This confirms that **skin detection quality is not the
+primary source of error** — the landmark localization algorithm itself
+is the bottleneck.
 
-**A3 confirms the bottleneck finding:** Viola-Jones achieves 95.6% 
-detection rate — significantly better than A1 (69.7%) and A2 (57.8%) 
-— because it uses a trained appearance model rather than hand-crafted 
-skin detection. However, NME remains at 0.735, comparable to A2 
-(0.776). This confirms that landmark localization — not face detection 
-— is the primary source of error across all three approaches.
+**Frontal images are harder on this dataset.** Counter-intuitively, all
+approaches achieve worse NME on the 136 frontal images than on the full
+dataset. This is because MTFL's frontal images are rare and atypical — the
+dataset is 74% right profile, so algorithms implicitly tune to that case.
+A4's eye cascade collapses on frontal (16.2% detection) — the 136 frontal
+images in MTFL may have unusual characteristics.
+
+**Pose stratification** (see `analysis/plot_nme_by_pose.png`): upward-tilt
+images (pose=4) are easier than profile images for all approaches. A3 and
+A4 show the smallest NME degradation across poses, while A1 degrades most
+severely on left/right profiles.
+
+**Glasses reduce A4 detection rate significantly** (26.5% vs 42.8%
+without glasses) — the eye cascade confuses glasses frames with eye
+boundaries. A1-A3 are less sensitive to glasses.
+
+**Smile has minimal effect** — smiling images are slightly easier than
+neutral across all approaches, likely because smiling portraits tend to
+be more frontal and well-lit.
+
+**100% failure rate:** No approach reaches NME < 0.1 on any image.
+Classical methods without trained landmark detectors cannot achieve
+sub-10% IOD precision on a diverse real-world dataset.
+
+---
+
+## Analysis scripts
+
+```bash
+cd analysis
+
+# generate all tables and charts from CSV results
+python analyze_results.py
+
+# extract frontal-only annotation subset from MTFL training.txt
+python extract_frontal.py <path_to_training.txt> <output_path>
+```
+
+Charts saved to `analysis/`, tables printed to console.
 
 ---
 
@@ -280,18 +354,23 @@ Run the project. A file dialog opens — pick any image from `Images/`.
 Then select from the menu:
 
 ```
-1. Approach 1 - HSV skin detection
+1. Approach 1 - HSV + YCbCr skin detection
 2. Approach 2 - Region growing (click on skin in the popup window)
-3. Evaluate Approach 1 on MTFL
-4. Evaluate Approach 2 on MTFL (auto center seed)
-5. Evaluate A2 upper bound (GT seed — theoretical, uses ground truth)
+3. Approach 3 - Viola Jones face + classical landmarks
+4. Approach 4 - Viola Jones full pipeline
+5. Evaluate Approach 1 on MTFL
+6. Evaluate Approach 2 on MTFL (auto center seed)
+7. Evaluate A2 upper bound (GT seed — theoretical, uses ground truth)
+8. Evaluate Approach 3 on MTFL
+9. Evaluate Approach 4 on MTFL
 0. Exit
 ```
 
-For options 3–5, enter when prompted:
-- Annotation file: `<extract_path>\MTFL\training.txt`
+For options 5–9, enter when prompted:
+- Annotation file: `<extract_path>\MTFL\training.txt` (or `frontal_only.txt`)
 - Image root: `<extract_path>\MTFL`
-- Number of images (e.g. 1000)
+- Number of images
+- Output CSV path (optional, leave empty to skip)
 
 ---
 
@@ -301,8 +380,7 @@ For options 3–5, enter when prompted:
 Face detection in color images.
 *IEEE Transactions on Pattern Analysis and Machine Intelligence*, 24(5), 696–706.
 https://doi.org/10.1109/34.1000242
-*Pipeline structure (skin → face candidate → feature map → landmarks).
-MouthMap concept (chrominance-based mouth detection).*
+*Pipeline structure. MouthMap concept (chrominance-based mouth detection).*
 
 **[2]** Shaik, K. B., Ganesan, P., Kalist, V., Sathish, B. S., &
 Jenitha, J. M. M. (2015).
@@ -322,19 +400,20 @@ https://doi.org/10.1063/5.0120025
 (2016). Skin color segmentation using multi-color space threshold.
 *3rd International Conference on Computer and Information Sciences.*
 https://doi.org/10.1109/ICCOINS.2016.7783247
-*Multi-color-space skin detection (HSV + YCbCr + normalized RGB).*
+*Multi-color-space skin detection (HSV + YCbCr). YCbCr threshold values.*
 
 **[5]** Saber, E., & Tekalp, A. M. (1998).
 Frontal-view face detection and facial feature extraction using color,
 shape and symmetry-based cost functions.
 *Pattern Recognition Letters*, 19(8), 669–680.
 https://doi.org/10.1016/S0167-8655(98)00044-0
-*Symmetry-based cost functions for eye/nose/mouth localization.
-Our selectEyePair is a discrete approximation of this framework.*
+*Symmetry-based cost functions for landmark localization.
+selectEyePair is a discrete approximation of this framework.*
 
 **[6]** Gonzalez, R. C., & Woods, R. E. (2018).
 *Digital Image Processing* (4th ed.). Pearson.
-*Morphological operations (Ch. 9) and region growing (Ch. 10).*
+*Morphological operations (Ch. 9), region growing (Ch. 10),
+Otsu's thresholding method (Ch. 10).*
 
 **[7]** Rosenfeld, A., & Pfaltz, J. L. (1966).
 Sequential operations in digital picture processing.
@@ -356,40 +435,37 @@ WorldCat: https://www.worldcat.org/title/29600219
 **[10]** Sagonas, C., Antonakos, E., Tzimiropoulos, G., Zafeiriou, S.,
 & Pantic, M. (2016).
 300 faces in-the-wild challenge: Database and results.
-*Image and Vision Computing*, Special Issue on Facial Landmark
-Localisation.
+*Image and Vision Computing*, Special Issue on Facial Landmark Localisation.
 Annotations: https://ibug.doc.ic.ac.uk/resources/facial-point-annotations/
 *NME metric and failure threshold (0.1) used in our evaluation.*
+
+**[11]** Viola, P., & Jones, M. (2001).
+Rapid object detection using a boosted cascade of simple features.
+*IEEE Conference on Computer Vision and Pattern Recognition (CVPR).*
+https://doi.org/10.1109/CVPR.2001.990517
+*Viola-Jones face/eye/mouth detection: Haar features, integral image,
+AdaBoost, cascade classifier.*
+
+**[12]** Castrillón-Santana, M., Déniz-Suárez, O., Antón-Canalis, L.,
+& Lorenzo-Navarro, J. (2007).
+Face and facial feature detection evaluation.
+*1st Spanish Workshop on Biometrics*, Girona.
+*MCS mouth Haar cascade (haarcascade_mcs_mouth.xml),
+trained on 7000 positive samples.*
 
 ---
 
 ## Known limitations
 
 - **100% failure rate on MTFL** — NME never reaches the 0.1 threshold
-- **Fixed thresholds** — HSV and redness values tuned on a small set
-  of images, not robust across diverse skin tones and lighting
-- **Brown/dark eyes on tan skin** — misclassified as skin by HSV
-  thresholding, leaving no eye holes for detection
-- **Fixed seed fails** — A2 center seed misses faces that aren't
-  centered in the image
+- **Fixed thresholds** — HSV, YCbCr, and redness values not robust
+  across all skin tones and lighting conditions
+- **Eye cascade fails on non-frontal faces** — A4 detection rate drops
+  on tilted or poorly lit faces
+- **Fixed seed fails** — A2 center seed misses non-centered faces
 - **No tilted face handling** — vertical bands are axis-aligned
-- **Mouth systematic bias** — redness extends to chin/neck, pushing
-  the detected mouth point slightly below the lips despite the
-  `minR` correction
-- **No subpixel precision** — landmark positions are at integer
-  pixel coordinates
-
-## What would improve results
-
-- **Full Viola-Jones pipeline (Approach 4)** — use `haarcascade_eye.xml` 
-  and `haarcascade_mcs_mouth.xml` in addition to face detection. Eyes 
-  and mouth located by trained classifiers rather than darkness/redness 
-  thresholds. Would directly address the landmark localization bottleneck.
-- **Adaptive thresholding** — Otsu's method per-band rather than 
-  fixed `mean - offset` for eye darkness detection.
-- **Multi-color-space skin** — AND HSV with YCbCr thresholds, as in
-  [4], significantly more robust across skin tones
-- **Adaptive thresholding** — Otsu's method per-band rather than
-  fixed `mean - offset`
-- **dlib 68-point detector** — production-grade classical (non-deep)
-  landmark localization, ~1ms per image
+- **Mouth systematic bias** — `minR` correction partially mitigates
+  chin/neck redness but does not eliminate it
+- **No subpixel precision** — landmark positions at integer coordinates
+- **Custom implementations are slow** — morphology and labeling written
+  from scratch; full dataset evaluation takes several hours
