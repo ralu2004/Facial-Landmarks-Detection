@@ -1,16 +1,23 @@
+// Evaluator.cpp
+// MTFL annotation parser, NME computation, and evaluation loops
+// for all four approaches.
+
 #include "stdafx.h"
 #include "Evaluation.h"
 #include <fstream>
 #include <sstream>
 
 // parse one line of MTFL annotation into GTLandmarks struct
+// format: image_path x1 y1 x2 y2 x3 y3 x4 y4 x5 y5 gender smile glasses pose
+// points: leftEye, rightEye, nose, mouthLeft, mouthRight
 static bool parseLine(const string& line, const string& imageRoot, GTLandmarks& gt) {
 	istringstream ss(line);
 	string path;
 	float x1, y1, x2, y2, x3, y3, x4, y4, x5, y5;
 	int gender, smile, glasses, pose;
 
-	if (!(ss >> path >> x1 >> y1 >> x2 >> y2 >> x3 >> y3 >> x4 >> y4 >> x5 >> y5 >> gender >> smile >> glasses >> pose))
+	if (!(ss >> path >> x1 >> y1 >> x2 >> y2 >> x3 >> y3 >> x4 >> y4 >> x5 >> y5
+		>> gender >> smile >> glasses >> pose))
 		return false;
 
 	if (path.empty()) return false;
@@ -24,14 +31,53 @@ static bool parseLine(const string& line, const string& imageRoot, GTLandmarks& 
 	return true;
 }
 
-// normalized error for one point
-// ||detected - gt|| / interocular_distance
+// normalized error for one point: ||detected - gt|| / IOD
 static double pointNME(Point detected, Point gt, double iod) {
 	double dx = detected.x - gt.x;
 	double dy = detected.y - gt.y;
 	return sqrt(dx * dx + dy * dy) / iod;
 }
 
+// accumulate per-image NME into result fields
+static void accumulateNME(EvalResult& result, const Landmarks& lm, const GTLandmarks& gt, double iod, double& totalEyeNME,
+	double& totalMouthNME, double& totalCombinedNME, int& failures) {
+
+	// eye NME
+	double eyeNME = 0;
+	eyeNME += pointNME(lm.leftEye, gt.leftEye, iod);
+	eyeNME += pointNME(lm.rightEye, gt.rightEye, iod);
+	eyeNME /= 2.0;
+	totalEyeNME += eyeNME;
+
+	// mouth NME 
+	double combinedNME = eyeNME;
+	if (lm.mouthOk) {
+		double mouthNME = pointNME(lm.mouth, gt.mouthCenter(), iod);
+		totalMouthNME += mouthNME;
+		result.mouthDetected++;
+		// combined = mean of eye NME and mouth NME
+		combinedNME = (eyeNME + mouthNME) / 2.0;
+	}
+
+	totalCombinedNME += combinedNME;
+	if (combinedNME > 0.1) failures++;
+}
+
+// finalize result fields from accumulators
+static void finalizeResult(EvalResult& result, double totalEyeNME, double totalMouthNME, double totalCombinedNME, int failures)
+{
+	if (result.detected > 0) {
+		result.eyeNME = totalEyeNME / result.detected;
+		result.meanNME = totalCombinedNME / result.detected;
+		result.failureRate = (double)failures / result.detected * 100.0;
+	}
+	if (result.mouthDetected > 0) {
+		result.mouthNME = totalMouthNME / result.mouthDetected;
+	}
+}
+
+// Approach 1 + 2
+// skin-mask based evaluation
 EvalResult runEvaluation(const string& annotationFile, const string& imageRoot, int maxImages, function<Mat_<uchar>(Mat_<Vec3b>)> skinDetector, const LandmarkParams& p) {
 	EvalResult result;
 
@@ -41,81 +87,57 @@ EvalResult runEvaluation(const string& annotationFile, const string& imageRoot, 
 		return result;
 	}
 
-	double totalNME = 0;
+	double totalEyeNME = 0, totalMouthNME = 0, totalCombinedNME = 0;
 	int failures = 0;
 	string line;
 
 	while (getline(file, line) && result.total < maxImages) {
-		
 		size_t start = line.find_first_not_of(" \t\r\n");
 		if (start == string::npos) continue;
 		line = line.substr(start);
-
 		if (line.empty()) continue;
 
 		GTLandmarks gt;
 		if (!parseLine(line, imageRoot, gt)) continue;
-
 		result.total++;
 
 		Mat_<Vec3b> img = imread(gt.imagePath, IMREAD_COLOR);
-		if (img.empty()) {
-			cout << "Failed to load: " << gt.imagePath << "\n";
-			continue;
-		}
+		if (img.empty()) continue;
 
-		Mat_<uchar> skin = skinDetector(img);
+		Mat_<uchar>  skin = skinDetector(img);
 		FaceGeometry face = extractFace(skin, p);
 		if (!face.valid) continue;
 
 		Landmarks lm = detectLandmarks(img, face, p);
-
-		// only score if both eyes detected
 		if (!lm.eyesOk) continue;
 		result.detected++;
 
 		double iod = gt.interocularDistance();
-		if (iod < 1.0) continue; // degenerate annotation
+		if (iod < 1.0) continue;
 
-		// NME = mean over detected landmarks
-		double nme = 0;
-		int count = 0;
+		accumulateNME(result, lm, gt, iod, totalEyeNME, totalMouthNME, totalCombinedNME, failures);
 
-		nme += pointNME(lm.leftEye, gt.leftEye, iod); 
-		count++;
-		nme += pointNME(lm.rightEye, gt.rightEye, iod); 
-		count++;
-
-		nme /= count;
-		totalNME += nme;
-		if (nme > 0.1) failures++;
-
-		if (result.total % 10 == 0) 
-			cout << "Evaluated " << result.total << "/" << maxImages << "  mean NME so far: " << totalNME / result.detected << "\n";
+		if (result.total % 10 == 0)
+			cout << "Evaluated " << result.total << "/" << maxImages
+			<< "  eye NME: " << totalEyeNME / result.detected << "\n";
 	}
 
-	if (result.detected > 0) {
-		result.meanNME = totalNME / result.detected;
-		result.failureRate = (double)failures / result.detected * 100.0;
-	}
-
+	finalizeResult(result, totalEyeNME, totalMouthNME, totalCombinedNME, failures);
 	return result;
 }
 
-EvalResult runEvaluationGTSeed(
-	const string& annotationFile,
-	const string& imageRoot,
-	int maxImages,
-	const LandmarkParams& p)
-{
+// Approach 2 upper bound
+// GT eye midpoint as seed (theoretical only)
+EvalResult runEvaluationGTSeed(const string& annotationFile, const string& imageRoot, int maxImages, const LandmarkParams& p) {
 	EvalResult result;
+
 	ifstream file(annotationFile);
 	if (!file.is_open()) {
 		cout << "Cannot open annotation file: " << annotationFile << "\n";
 		return result;
 	}
 
-	double totalNME = 0;
+	double totalEyeNME = 0, totalMouthNME = 0, totalCombinedNME = 0;
 	int    failures = 0;
 	string line;
 
@@ -132,15 +154,14 @@ EvalResult runEvaluationGTSeed(
 		Mat_<Vec3b> img = imread(gt.imagePath, IMREAD_COLOR);
 		if (img.empty()) continue;
 
-		// GT seed — midpoint between ground truth eyes
-		// this is a theoretical
-		// upper bound only, not a fair evaluation
+		// GT seed: midpoint between ground truth eyes
+		// theoretical upper bound
 		Point gtSeed(
 			(gt.leftEye.x + gt.rightEye.x) / 2,
 			(gt.leftEye.y + gt.rightEye.y) / 2
 		);
 
-		Mat_<uchar> skin = regionGrowingPublic(img, gtSeed);
+		Mat_<uchar>  skin = regionGrowingPublic(img, gtSeed);
 		FaceGeometry face = extractFace(skin, p);
 		if (!face.valid) continue;
 
@@ -151,33 +172,19 @@ EvalResult runEvaluationGTSeed(
 		double iod = gt.interocularDistance();
 		if (iod < 1.0) continue;
 
-		double nme = 0;
-		nme += pointNME(lm.leftEye, gt.leftEye, iod);
-		nme += pointNME(lm.rightEye, gt.rightEye, iod);
-		nme /= 2;
-
-		totalNME += nme;
-		if (nme > 0.1) failures++;
+		accumulateNME(result, lm, gt, iod, totalEyeNME, totalMouthNME, totalCombinedNME, failures);
 
 		if (result.total % 10 == 0)
 			cout << "Evaluated " << result.total << "/" << maxImages
-			<< "  mean NME so far: " << totalNME / result.detected << "\n";
+			<< "  eye NME: " << totalEyeNME / result.detected << "\n";
 	}
 
-	if (result.detected > 0) {
-		result.meanNME = totalNME / result.detected;
-		result.failureRate = (double)failures / result.detected * 100.0;
-	}
+	finalizeResult(result, totalEyeNME, totalMouthNME, totalCombinedNME, failures);
 	return result;
 }
 
-EvalResult runEvaluationVJ(
-	const string& annotationFile,
-	const string& imageRoot,
-	const string& cascadePath,
-	int maxImages,
-	const LandmarkParams& p)
-{
+// Approach 3 — VJ face + classical landmarks
+EvalResult runEvaluationVJ(const string& annotationFile, const string& imageRoot, const string& cascadePath, int maxImages, const LandmarkParams& p) {
 	EvalResult result;
 
 	CascadeClassifier cascade;
@@ -192,8 +199,8 @@ EvalResult runEvaluationVJ(
 		return result;
 	}
 
-	double totalNME = 0;
-	int    failures = 0;
+	double totalEyeNME = 0, totalMouthNME = 0, totalCombinedNME = 0;
+	int failures = 0;
 	string line;
 
 	while (getline(file, line) && result.total < maxImages) {
@@ -209,27 +216,8 @@ EvalResult runEvaluationVJ(
 		Mat_<Vec3b> img = imread(gt.imagePath, IMREAD_COLOR);
 		if (img.empty()) continue;
 
-		// VJ face detection — no skin mask needed
-		Mat_<uchar> gray = convertToGray(img);
-		vector<Rect> faces;
-		cascade.detectMultiScale(gray, faces, 1.1, 4, 0, Size(60, 60));
-		if (faces.empty()) continue;
-
-		// largest face
-		Rect best = faces[0];
-		for (const Rect& r : faces)
-			if (r.area() > best.area()) best = r;
-
-		FaceGeometry face;
-		face.bbox = best;
-		face.midRow = best.y + best.height / 2;
-		face.midCol = best.x + best.width / 2;
-		face.valid = true;
-		face.mask = Mat_<uchar>(img.size(), (uchar)0);
-		face.skinOnly = Mat_<uchar>(img.size(), (uchar)0);
-		for (int i = best.y; i < best.y + best.height; ++i)
-			for (int j = best.x; j < best.x + best.width; ++j)
-				face.mask(i, j) = 255;
+		FaceGeometry face = detectFaceVJ(img, cascade);
+		if (!face.valid) continue;
 
 		Landmarks lm = detectLandmarks(img, face, p);
 		if (!lm.eyesOk) continue;
@@ -238,22 +226,79 @@ EvalResult runEvaluationVJ(
 		double iod = gt.interocularDistance();
 		if (iod < 1.0) continue;
 
-		double nme = 0;
-		nme += pointNME(lm.leftEye, gt.leftEye, iod);
-		nme += pointNME(lm.rightEye, gt.rightEye, iod);
-		nme /= 2;
-
-		totalNME += nme;
-		if (nme > 0.1) failures++;
+		accumulateNME(result, lm, gt, iod, totalEyeNME, totalMouthNME, totalCombinedNME, failures);
 
 		if (result.total % 10 == 0)
 			cout << "Evaluated " << result.total << "/" << maxImages
-			<< "  mean NME: " << totalNME / result.detected << "\n";
+			<< "  eye NME: " << totalEyeNME / result.detected << "\n";
 	}
 
-	if (result.detected > 0) {
-		result.meanNME = totalNME / result.detected;
-		result.failureRate = (double)failures / result.detected * 100.0;
+	finalizeResult(result, totalEyeNME, totalMouthNME, totalCombinedNME, failures);
+	return result;
+}
+
+// Approach 4
+// full VJ pipeline: face + eye + mouth cascades
+EvalResult runEvaluationVJFull(const string& annotationFile, const string& imageRoot, const string& faceCascadePath, const string& eyeCascadePath, 
+	const string& mouthCascadePath, int maxImages) {
+	EvalResult result;
+
+	CascadeClassifier faceCascade, eyeCascade, mouthCascade;
+	if (!faceCascade.load(faceCascadePath)) { 
+		cout << "face cascade failed\n"; 
+		return result; 
 	}
+
+	if (!eyeCascade.load(eyeCascadePath)) { 
+		cout << "eye cascade failed\n";  
+		return result; 
+	}
+
+	if (!mouthCascade.load(mouthCascadePath)) { 
+		cout << "mouth cascade failed\n"; 
+		return result; 
+	}
+
+	ifstream file(annotationFile);
+	if (!file.is_open()) {
+		cout << "Cannot open annotation file: " << annotationFile << "\n";
+		return result;
+	}
+
+	double totalEyeNME = 0, totalMouthNME = 0, totalCombinedNME = 0;
+	int failures = 0;
+	string line;
+
+	while (getline(file, line) && result.total < maxImages) {
+		size_t start = line.find_first_not_of(" \t\r\n");
+		if (start == string::npos) continue;
+		line = line.substr(start);
+		if (line.empty()) continue;
+
+		GTLandmarks gt;
+		if (!parseLine(line, imageRoot, gt)) continue;
+		result.total++;
+
+		Mat_<Vec3b> img = imread(gt.imagePath, IMREAD_COLOR);
+		if (img.empty()) continue;
+
+		FaceGeometry face = detectFaceVJ(img, faceCascade);
+		if (!face.valid) continue;
+
+		Landmarks lm = detectLandmarksVJ(img, face, eyeCascade, mouthCascade);
+		if (!lm.eyesOk) continue;
+		result.detected++;
+
+		double iod = gt.interocularDistance();
+		if (iod < 1.0) continue;
+
+		accumulateNME(result, lm, gt, iod, totalEyeNME, totalMouthNME, totalCombinedNME, failures);
+
+		if (result.total % 10 == 0)
+			cout << "Evaluated " << result.total << "/" << maxImages
+			<< "  eye NME: " << totalEyeNME / result.detected << "\n";
+	}
+
+	finalizeResult(result, totalEyeNME, totalMouthNME, totalCombinedNME, failures);
 	return result;
 }

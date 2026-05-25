@@ -105,6 +105,7 @@
     <ClCompile Include="Approach1_HSV.cpp" />
     <ClCompile Include="Approach2_Interactive.cpp" />
     <ClCompile Include="Approach3_ViolaJones.cpp" />
+    <ClCompile Include="Approach4_ViolaJonesFull.cpp" />
     <ClCompile Include="common.cpp" />
     <ClCompile Include="Evaluator.cpp" />
     <ClCompile Include="FacialLandmarksUtils.cpp" />

@@ -12,6 +12,7 @@
 #include <queue>
 #include <algorithm>
 #include <climits>
+#include <opencv2/objdetect.hpp>
 
 using namespace std;
 
@@ -50,15 +51,17 @@ struct Component {
 
 struct LandmarkParams {
     // morphology
-    int   strelKsize = 5;             // opening kernel size (removes speckles)
-    int   closingKsize = 3;           // closing kernel size — smaller than opening
-    // intentionally: fills tiny gaps without
-    // filling eye/mouth holes
+    int   strelKsize = 5;               // opening kernel size
+    int   closingKsize = 3;             // closing kernel size — smaller than opening to fill tiny gaps without filling eyes/mouth
 
     // eye search band, as fractions of face height from top of bbox
-    float eyeBandTop = 0.20f;         // skip forehead/hair
-    float eyeBandBottom = 0.55f;      // stop above the nose tip
-    int   eyeDarknessOffset = 15;     // how much darker than face mean (empirical)
+    float eyeBandTop = 0.20f;           // skip forehead/hair
+    float eyeBandBottom = 0.55f;        // stop above the nose tip
+    int   eyeDarknessOffset = 15;       // how much darker than face mean (empirical)
+    // only used when useOtsu = false
+
+    // whether to use Otsu's method for eye darkness threshold
+    bool  useOtsu = false;
 
     // mouth search band
     float mouthBandTop = 0.68f;
@@ -74,10 +77,10 @@ struct LandmarkParams {
     float maxEyeDyFrac = 0.10f;
 
     // mouth geometry
-    float maxMouthAreaFrac = 0.25f;    // redness blobs can be large
-    float mouthAspectMaxRatio = 1.3f;  // max height/width — mouths are wider than tall
-    float mouthMinWidthFrac = 0.15f;   // min width as fraction of face width
-    float mouthMaxWidthFrac = 0.90f;   // max width as fraction of face width
+    float maxMouthAreaFrac = 0.25f;     // redness blobs can be large
+    float mouthAspectMaxRatio = 1.3f;   // max height/width — mouths are wider than tall
+    float mouthMinWidthFrac = 0.15f;    // min width as fraction of face width
+    float mouthMaxWidthFrac = 0.90f;    // max width as fraction of face width
 };
 
 // ============================================================================
@@ -98,11 +101,13 @@ bool                isInsideFace(const Mat_<uchar>& faceMask, int i, int j, int 
 void                drawCross(Mat& img, Point p, Scalar color, int sz = 10);
 Mat_<Vec3b>         drawLandmarks(Mat_<Vec3b> img, const FaceGeometry& face, const Landmarks& lm);
 FaceGeometry        extractFace(Mat_<uchar> skinMask, const LandmarkParams& p);
-Mat_<uchar>         darkFeatureMask(Mat_<Vec3b> img, const FaceGeometry& face, float bandTopFrac, float bandBottomFrac, int darknessOffset);
+Mat_<uchar>         darkFeatureMask(Mat_<Vec3b> img, const FaceGeometry& face, float bandTopFrac, float bandBottomFrac, int darknessOffset, bool useOtsu);
 Mat_<uchar>         mouthFeatureMask(Mat_<Vec3b> img, const FaceGeometry& face, float bandTopFrac, float bandBottomFrac);
 bool                selectEyePair(const vector<Component>& comps, const FaceGeometry& face, Point& leftEye, Point& rightEye, const LandmarkParams& p);
 bool                selectMouth(const vector<Component>& comps, const FaceGeometry& face, Point& mouth, const LandmarkParams& p);
 Landmarks           detectLandmarks(Mat_<Vec3b> img, const FaceGeometry& face, const LandmarkParams& p);
+FaceGeometry        detectFaceVJ(const Mat_<Vec3b>& img, CascadeClassifier& cascade);
+Landmarks           detectLandmarksVJ(const Mat_<Vec3b>& img, const FaceGeometry& face, CascadeClassifier& eyeCascade, CascadeClassifier& mouthCascade);
 
 // ============================================================================
 // Approach entry points (one per approach .cpp)
@@ -111,6 +116,7 @@ Landmarks           detectLandmarks(Mat_<Vec3b> img, const FaceGeometry& face, c
 void runApproach1(const string& path);
 void runApproach2(const string& path);
 void runApproach3(const string& path);
+void runApproach4(const string& path);
 
 // ============================================================================
 // Evaluation wrappers
